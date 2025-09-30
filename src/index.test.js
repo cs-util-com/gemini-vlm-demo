@@ -12,7 +12,7 @@
 
 describe('Index', () => {
   test('placeholder test', () => {
-    // Replace with actual tests once index.js has testable logic
-    expect(true).toBe(true);
+    // TODO Replace with actual tests once index.js has testable logic
+    expect(true).toBe(false);
   });
 });
