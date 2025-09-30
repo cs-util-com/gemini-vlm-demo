@@ -245,8 +245,28 @@
     "aggregates": {
       "type": "object",
       "properties": {
-        "countsByLabel": { "type": "object", "additionalProperties": { "type": "number" } },
-        "countsByCategory": { "type": "object", "additionalProperties": { "type": "number" } }
+        "countsByLabel": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "count": { "type": "number" }
+            },
+            "required": ["label", "count"]
+          }
+        },
+        "countsByCategory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": { "type": "string" },
+              "count": { "type": "number" }
+            },
+            "required": ["category", "count"]
+          }
+        }
       }
     }
   },
