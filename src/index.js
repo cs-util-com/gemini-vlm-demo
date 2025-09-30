@@ -13,6 +13,8 @@ const canvas   = document.getElementById('canvas');
 const ctx      = canvas.getContext('2d');
 const jsonOut  = document.getElementById('jsonOut');
 
+const STORAGE_KEY = 'geminiApiKey';
+
 let currentFile = null;
 let currentImageBitmap = null;
 let naturalW = 0, naturalH = 0;
@@ -21,6 +23,32 @@ let naturalW = 0, naturalH = 0;
 function logJson(obj, note) {
 	const head = note ? `// ${note}\n` : '';
 	jsonOut.textContent = head + JSON.stringify(obj, null, 2);
+}
+
+function getStoredApiKey() {
+	try {
+		return globalThis.localStorage?.getItem(STORAGE_KEY) || '';
+	} catch {
+		return '';
+	}
+}
+
+function persistApiKey(value) {
+	try {
+		const trimmed = value.trim();
+		if (trimmed) {
+			globalThis.localStorage?.setItem(STORAGE_KEY, trimmed);
+		} else {
+			globalThis.localStorage?.removeItem(STORAGE_KEY);
+		}
+	} catch {
+		// Ignore storage errors (private mode, quotas, etc.)
+	}
+}
+
+const storedApiKey = getStoredApiKey();
+if (storedApiKey) {
+	apiKeyEl.value = storedApiKey;
 }
 
 function toBase64(file) {
@@ -227,10 +255,15 @@ fileEl.addEventListener('change', async e => {
 	}
 });
 
-runBtn.addEventListener('click', async () => {
-	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
-	if (!apiKey) return logJson({ error: 'Missing API key' }, 'Error');
+apiKeyEl.addEventListener('input', e => {
+	persistApiKey(e.target.value);
+});
+
+	runBtn.addEventListener('click', async () => {
+		const apiKey = apiKeyEl.value.trim();
+		const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+		persistApiKey(apiKey);
+		if (!apiKey) return logJson({ error: 'Missing API key' }, 'Error');
 	if (!currentFile) return logJson({ error: 'No image selected' }, 'Error');
 
 	// Redraw base image before overlays

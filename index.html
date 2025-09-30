@@ -10,6 +10,9 @@
   header { padding: 16px 20px; border-bottom: 1px solid #232332; display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
   header input, header select, header button { background:#141420; color:#e8e8ef; border:1px solid #2a2a3b; border-radius:8px; padding:10px 12px; }
   header input[type="password"] { width: 320px; }
+  label small.hint-inline { display:block; margin-top:6px; color:#9aa0b4; }
+  label small.hint-inline a { color:#9aa0b4; text-decoration:underline; }
+  label small.hint-inline a:hover { color:#cfd5e4; }
   #dropzone { margin: 16px 20px; border: 2px dashed #303049; border-radius: 12px; padding: 20px; text-align: center; background:#11111a; }
   #dropzone.drag { background:#161628; border-color:#4a4aff; }
   #canvasWrap { margin: 16px 20px; overflow:auto; }
@@ -24,7 +27,8 @@
 <header>
   <div class="row">
     <label>Gemini API Key:
-      <input id="apiKey" type="password" placeholder="Paste key (kept in memory only)" />
+      <input id="apiKey" type="password" placeholder="Paste key (stored locally in this browser)" />
+      <small class="hint hint-inline">Get your key from <a href="https://aistudio.google.com/app/api-keys" target="_blank" rel="noreferrer noopener">Google AI Studio</a>. The key is stored only in your browser.</small>
     </label>
     <label>Model:
       <select id="model">
