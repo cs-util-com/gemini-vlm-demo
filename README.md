@@ -127,7 +127,7 @@
         "width": { "type": "number", "nullable": true },
         "height": { "type": "number", "nullable": true },
         "fileName": { "type": "string", "nullable": true },
-        "coordSystem": { "type": "string", "enum": ["pixel", "normalized_0_1000"], "nullable": true }
+        "coordSystem": { "type": "string", "enum": ["normalized_0_1000"], "nullable": true, "description": "Always normalized_0_1000" }
       },
       "nullable": true
     },
@@ -141,14 +141,11 @@
           "category": { "type": "string", "enum": ["object", "facility_asset", "safety_issue", "progress", "other"] },
           "confidence": { "type": "number" },
           "bbox": {
-            "type": "object",
-            "properties": {
-              "x": { "type": "number" },
-              "y": { "type": "number" },
-              "width": { "type": "number" },
-              "height": { "type": "number" }
-            },
-            "required": ["x", "y", "width", "height"],
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 4,
+            "maxItems": 4,
+            "description": "[ymin, xmin, ymax, xmax] normalized 0-1000",
             "nullable": true
           },
           "polygon": {
@@ -158,6 +155,7 @@
               "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
               "required": ["x", "y"]
             },
+            "description": "Array of {x,y} points, each normalized 0-1000",
             "nullable": true
           },
           "safety": {
@@ -287,18 +285,25 @@ Return findings strictly matching the provided response schema across FOUR categ
 4) Progress/scene insights (e.g., "drywall phase ~70%", "MEP rough-in present", "finishes started").
 
 Geometry:
-- Use bbox (pixel coords, top-left origin) when localizable.
-- Use polygon only when a box would be misleading.
-- For whole-image findings, omit geometry and prefer `global_insights`.
+- Use bbox as [ymin, xmin, ymax, xmax] array, normalized 0-1000, top-left origin, when localizable.
+- Use polygon only when a box would be misleading (each point {x,y} normalized 0-1000).
+- For whole-image findings (e.g., overall progress), use no geometry under detections (prefer global_insights).
 
-Safety: set category:"safety_issue" and fill safety.{isViolation,severity,rule}.
-Progress: per-region → category:"progress" with progress.{phase,percentComplete,notes}; overall → `global_insights`.
+Safety:
+- For safety items, set category: "safety_issue" and fill safety.{isViolation, severity, rule}.
 
-Attributes: add {name, valueNum|valueStr|valueBool, unit?} where useful.
+Progress:
+- For per-region progress, set category: "progress" and fill progress.{phase, percentComplete, notes}.
+- For overall progress, prefer global_insights (no geometry).
 
-Aggregates: ensure counts match detections.
+Attributes:
+- Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
 
-Coordinates: set image.coordSystem to "pixel" or "normalized_0_1000" consistently.
+Aggregates:
+- Ensure aggregates.countsByLabel & countsByCategory match detections.
+
+Coordinates:
+- Set image.coordSystem explicitly to "normalized_0_1000" (Google's 0..1000 normalization).
 Be conservative with confidence. Output ONLY JSON (no prose).
 ```
 
@@ -350,8 +355,14 @@ Content-Type: application/json
 
 ### 7.2 Boxes
 
-* If `coordSystem === "pixel"`: draw directly after scaling to canvas.
-* If `coordSystem === "normalized_0_1000"`: convert `x,y,w,h` to pixels by multiplying with `naturalW/1000` and `naturalH/1000`, then scale to canvas.
+* Gemini returns bboxes as **arrays** in `[ymin, xmin, ymax, xmax]` format (note: **y-first** order).
+* If `coordSystem === "normalized_0_1000"` (Gemini default): convert to pixels by:
+  * `xMinPx = (xmin / 1000) * naturalW`
+  * `yMinPx = (ymin / 1000) * naturalH`
+  * `xMaxPx = (xmax / 1000) * naturalW`
+  * `yMaxPx = (ymax / 1000) * naturalH`
+  * Then convert to `{x, y, width, height}` format and scale to canvas dimensions.
+* If `coordSystem === "pixel"`: convert array to object format, then scale directly to canvas.
 
 ### 7.3 Polygons
 
@@ -374,7 +385,7 @@ Content-Type: application/json
 * **JSON parse failure** → attempt to strip accidental code fences; otherwise show parse error.
 * **Oversized images** → if request size fails, instruct users to try a smaller image (future: Files API flow).
 * **No detections** → draw nothing; JSON panel still shows `global_insights` (may include progress/safety info).
-* **Coordinate system missing** → assume `"pixel"`; set explicitly in prompt to reduce ambiguity.
+* **Coordinate system missing** → assume `"normalized_0_1000"` (Gemini's default); prompt explicitly requests this to reduce ambiguity.
 
 ---
 

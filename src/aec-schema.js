@@ -9,8 +9,8 @@ Return findings strictly matching the provided response schema across FOUR categ
 4) Progress/scene insights (e.g., "drywall phase ~70%", "MEP rough-in present", "finishes started").
 
 Geometry:
-- Use bbox (pixel coords, top-left origin) when localizable.
-- Use polygon only when a box would be misleading.
+- Use bbox as [ymin, xmin, ymax, xmax] array, normalized 0-1000, top-left origin, when localizable.
+- Use polygon only when a box would be misleading (each point {x,y} normalized 0-1000).
 - For whole-image findings (e.g., overall progress), use no geometry under detections (prefer global_insights).
 
 Safety:
