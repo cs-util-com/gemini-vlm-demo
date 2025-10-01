@@ -1,7 +1,5 @@
 /* istanbul ignore file */
 
-import { colorForCategory } from './ui-utils.js';
-
 /**
  * Calculate aggregates from detections (client-side to prevent LLM hallucination)
  */
@@ -30,7 +28,7 @@ export function calculateAggregates(detections) {
 /**
  * Render the interactive report UI
  */
-export function renderReportUI(data, onDetectionHover, onDetectionLeave) {
+export function renderReportUI(data) {
 	const detections = Array.isArray(data.detections) ? data.detections : [];
 	const insights = Array.isArray(data.global_insights) ? data.global_insights : [];
 	const aggregates = calculateAggregates(detections);
@@ -38,24 +36,23 @@ export function renderReportUI(data, onDetectionHover, onDetectionLeave) {
 	// Separate safety issues and progress items
 	const safetyIssues = detections.filter(d => d.category === 'safety_issue');
 	const progressItems = detections.filter(d => d.category === 'progress' && d.progress);
-	const otherDetections = detections.filter(d => d.category !== 'safety_issue' && d.category !== 'progress');
 
 	let html = '';
 
 	// Safety Issues Section (if any)
 	if (safetyIssues.length > 0) {
-		html += renderSection('safety', '🚨 Safety Issues', renderSafetyCards(safetyIssues, onDetectionHover, onDetectionLeave), false);
+		html += renderSection('safety', '🚨 Safety Issues', renderSafetyCards(safetyIssues), false);
 	}
 
 	// Progress Section (if any detections or insights)
 	const progressInsights = insights.filter(i => i.category === 'progress');
 	if (progressItems.length > 0 || progressInsights.length > 0) {
-		html += renderSection('progress', '📊 Progress', renderProgressSection(progressItems, progressInsights, onDetectionHover, onDetectionLeave), true);
+		html += renderSection('progress', '📊 Progress', renderProgressSection(progressItems, progressInsights), true);
 	}
 
 	// All Detections Section
 	if (detections.length > 0) {
-		html += renderSection('detections', '🔍 All Detections', renderDetectionCards(detections, onDetectionHover, onDetectionLeave), true);
+		html += renderSection('detections', '🔍 All Detections', renderDetectionCards(detections), true);
 	}
 
 	// Global Insights Section (non-progress)
@@ -87,7 +84,7 @@ function renderSection(id, title, content, collapsed = false) {
 	`;
 }
 
-function renderSafetyCards(safetyIssues, onDetectionHover, onDetectionLeave) {
+function renderSafetyCards(safetyIssues) {
 	const cards = safetyIssues.map(det => {
 		const severity = det.safety?.severity || 'low';
 		const rule = det.safety?.rule || 'No rule specified';
@@ -106,7 +103,7 @@ function renderSafetyCards(safetyIssues, onDetectionHover, onDetectionLeave) {
 	return `<div class="safety-grid">${cards}</div>`;
 }
 
-function renderProgressSection(progressItems, progressInsights, onDetectionHover, onDetectionLeave) {
+function renderProgressSection(progressItems, progressInsights) {
 	let html = '';
 
 	// Progress from detections (regional)
@@ -169,7 +166,7 @@ function renderProgressSection(progressItems, progressInsights, onDetectionHover
 	return html || '<p style="color:#9aa0b4;">No progress information available.</p>';
 }
 
-function renderDetectionCards(detections, onDetectionHover, onDetectionLeave) {
+function renderDetectionCards(detections) {
 	const cards = detections.map(det => {
 		const confidence = typeof det.confidence === 'number' ? (det.confidence * 100).toFixed(0) : '?';
 		const category = det.category || 'other';

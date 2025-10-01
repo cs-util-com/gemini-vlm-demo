@@ -316,7 +316,7 @@ runBtn.addEventListener('click', async () => {
 
 		// Gemini's standard: normalized_0_1000 with top-left origin
 		const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
-		const coordOrigin = ensureCoordOrigin(parsed, 'top-left');
+		ensureCoordOrigin(parsed, 'top-left');
 		if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
 
 		// Store current data
@@ -327,17 +327,7 @@ runBtn.addEventListener('click', async () => {
 		drawOverlays();
 
 		// Render interactive report
-		const reportHtml = renderReportUI(
-			parsed,
-			(detection) => {
-				highlightedDetectionId = detection.id;
-				drawOverlays();
-			},
-			(detection) => {
-				highlightedDetectionId = null;
-				drawOverlays();
-			}
-		);
+		const reportHtml = renderReportUI(parsed);
 		reportWrap.innerHTML = reportHtml;
 
 		// Setup interactions
@@ -348,7 +338,7 @@ runBtn.addEventListener('click', async () => {
 				highlightedDetectionId = detection.id;
 				drawOverlays();
 			},
-			(detection) => {
+			() => {
 				highlightedDetectionId = null;
 				drawOverlays();
 			}
