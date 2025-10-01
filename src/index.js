@@ -15,6 +15,10 @@ import {
 	extractBase64FromDataUrl,
 	prepareDetectionData
 } from './ui-utils.js';
+import {
+	renderReportUI,
+	setupReportInteractions
+} from './report-ui.js';
 
 // ---------- UI Elements ----------
 const apiKeyEl = document.getElementById('apiKey');
@@ -25,17 +29,84 @@ const runBtn   = document.getElementById('runBtn');
 const dropzone = document.getElementById('dropzone');
 const canvas   = document.getElementById('canvas');
 const ctx      = canvas.getContext('2d');
+const reportWrap = document.getElementById('reportWrap');
 const jsonOut  = document.getElementById('jsonOut');
 
 const STORAGE_KEY = 'geminiApiKey';
 
 let currentFile = null;
 let currentImageBitmap = null;
+let currentDetections = [];
+let currentParsedData = null;
 let naturalW = 0, naturalH = 0;
+let highlightedDetectionId = null;
 
 // ---------- Helpers ----------
 function logJson(obj, note) {
 	jsonOut.textContent = formatJsonOutput(obj, note);
+}
+
+function clearReport() {
+	reportWrap.innerHTML = '';
+}
+
+function drawOverlays() {
+	if (!currentImageBitmap || !currentParsedData) return;
+
+	// Redraw base image
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	ctx.drawImage(currentImageBitmap, 0, 0, canvas.width, canvas.height);
+
+	const scaleX = canvas.width / naturalW;
+	const scaleY = canvas.height / naturalH;
+	const coordSystem = ensureCoordSystem(currentParsedData, 'normalized_0_1000');
+	const coordOrigin = ensureCoordOrigin(currentParsedData, 'top-left');
+
+	for (const d of currentDetections) {
+		const isHighlighted = highlightedDetectionId === d.id;
+		const color = colorForCategory(d.category);
+		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
+
+		// Draw with extra emphasis if highlighted
+		if (isHighlighted) {
+			ctx.save();
+			ctx.shadowColor = color;
+			ctx.shadowBlur = 15;
+		}
+
+		if (d.bbox) {
+			const b = toCanvasBox(
+				d.bbox,
+				coordSystem,
+				scaleX,
+				scaleY,
+				naturalW,
+				naturalH,
+				coordOrigin,
+				canvas.width,
+				canvas.height
+			);
+			if (b) {
+				if (isHighlighted) {
+					ctx.lineWidth = 4;
+				}
+				drawBox(b, label, color);
+			}
+		}
+		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
+			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
+			if (pts) {
+				if (isHighlighted) {
+					ctx.lineWidth = 4;
+				}
+				drawPolygon(pts, label, color);
+			}
+		}
+
+		if (isHighlighted) {
+			ctx.restore();
+		}
+	}
 }
 
 function getStoredApiKey() {
@@ -222,6 +293,12 @@ runBtn.addEventListener('click', async () => {
 	if (!apiKey) return logJson({ error: 'Missing API key' }, 'Error');
 	if (!currentFile) return logJson({ error: 'No image selected' }, 'Error');
 
+	// Clear previous results
+	clearReport();
+	currentDetections = [];
+	currentParsedData = null;
+	highlightedDetectionId = null;
+
 	// Redraw base image before overlays
 	if (currentImageBitmap) {
 		ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -242,39 +319,46 @@ runBtn.addEventListener('click', async () => {
 		const coordOrigin = ensureCoordOrigin(parsed, 'top-left');
 		if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
 
-		// Draw detections
-		const scaleX = canvas.width / naturalW;
-		const scaleY = canvas.height / naturalH;
+		// Store current data
+		currentParsedData = parsed;
+		currentDetections = Array.isArray(parsed.detections) ? parsed.detections : [];
 
-		const dets = Array.isArray(parsed.detections) ? parsed.detections : [];
-		for (const d of dets) {
-			const color = colorForCategory(d.category);
-			const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
+		// Draw initial overlays
+		drawOverlays();
 
-			if (d.bbox) {
-				const b = toCanvasBox(
-					d.bbox,
-					coordSystem,
-					scaleX,
-					scaleY,
-					naturalW,
-					naturalH,
-					coordOrigin,
-					canvas.width,
-					canvas.height
-				);
-				if (b) drawBox(b, label, color);
+		// Render interactive report
+		const reportHtml = renderReportUI(
+			parsed,
+			(detection) => {
+				highlightedDetectionId = detection.id;
+				drawOverlays();
+			},
+			(detection) => {
+				highlightedDetectionId = null;
+				drawOverlays();
 			}
-			if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
-				const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
-				if (pts) drawPolygon(pts, label, color);
+		);
+		reportWrap.innerHTML = reportHtml;
+
+		// Setup interactions
+		setupReportInteractions(
+			reportWrap,
+			currentDetections,
+			(detection) => {
+				highlightedDetectionId = detection.id;
+				drawOverlays();
+			},
+			(detection) => {
+				highlightedDetectionId = null;
+				drawOverlays();
 			}
-		}
+		);
 
 		// Show full JSON (including any global_insights that don't map to boxes)
 		logJson(parsed, 'Model JSON');
 
 	} catch (err) {
+		clearReport();
 		logJson({ error: String(err?.message || err) }, 'Error');
 	}
 });

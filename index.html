@@ -21,6 +21,82 @@
   small.hint { color:#9aa0b4; }
   .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
   .spacer { flex:1; }
+
+  /* Report UI */
+  #reportWrap { margin: 16px 20px; }
+  .report-section { background:#11111a; border:1px solid #1e1e2e; border-radius:12px; margin-bottom:16px; overflow:hidden; }
+  .report-header { padding:16px 20px; background:#141420; cursor:pointer; user-select:none; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e1e2e; }
+  .report-header:hover { background:#181828; }
+  .report-header h3 { margin:0; font-size:16px; font-weight:600; display:flex; align-items:center; gap:8px; }
+  .report-header .toggle-icon { transition: transform 0.2s; }
+  .report-header.collapsed .toggle-icon { transform: rotate(-90deg); }
+  .report-content { padding:20px; }
+  .report-content.hidden { display:none; }
+
+  /* Safety Section */
+  .safety-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
+  .safety-card { background:#1a0f0f; border:1px solid #4a2020; border-radius:8px; padding:12px; }
+  .safety-card.severity-high { border-color:#ff4444; background:#1f0a0a; }
+  .safety-card.severity-medium { border-color:#ffaa44; background:#1f1508; }
+  .safety-card.severity-low { border-color:#ffdd44; background:#1f1c08; }
+  .safety-card:hover { box-shadow: 0 4px 12px rgba(255,68,68,0.2); transform: translateY(-1px); transition: all 0.2s; }
+  .safety-badge { display:inline-block; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }
+  .safety-badge.high { background:#ff4444; color:#fff; }
+  .safety-badge.medium { background:#ffaa44; color:#000; }
+  .safety-badge.low { background:#ffdd44; color:#000; }
+  .safety-card-title { font-weight:600; margin:8px 0 4px; font-size:14px; }
+  .safety-card-rule { color:#9aa0b4; font-size:12px; font-style:italic; }
+
+  /* Detection Cards */
+  .detection-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }
+  .detection-card { background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:12px; cursor:pointer; transition: all 0.2s; }
+  .detection-card:hover { border-color:#4a4aff; box-shadow: 0 4px 12px rgba(74,74,255,0.15); transform: translateY(-1px); }
+  .detection-card.category-object { border-left: 3px solid #ffcc00; }
+  .detection-card.category-facility_asset { border-left: 3px solid #00ddff; }
+  .detection-card.category-safety_issue { border-left: 3px solid #ff4444; }
+  .detection-card.category-progress { border-left: 3px solid #44ff88; }
+  .detection-card.category-other { border-left: 3px solid #9aa0b4; }
+  .detection-card.highlight { border-color:#4a4aff; box-shadow: 0 0 16px rgba(74,74,255,0.4); }
+  .detection-card-header { display:flex; justify-content:space-between; align-items:start; margin-bottom:8px; }
+  .detection-card-label { font-weight:600; font-size:14px; }
+  .detection-card-confidence { font-size:12px; color:#9aa0b4; }
+  .detection-card-category { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; background:#2a2a3b; color:#cfd5e4; margin-bottom:8px; }
+  .detection-card-attrs { font-size:12px; color:#9aa0b4; }
+  .detection-card-attrs dt { display:inline; font-weight:600; }
+  .detection-card-attrs dd { display:inline; margin:0 0 4px 4px; }
+
+  /* Progress Bars */
+  .progress-item { margin-bottom:16px; }
+  .progress-header { display:flex; justify-content:space-between; margin-bottom:6px; }
+  .progress-label { font-weight:600; font-size:14px; }
+  .progress-percent { font-size:14px; color:#44ff88; font-weight:600; }
+  .progress-bar-bg { background:#1e1e2e; height:24px; border-radius:6px; overflow:hidden; position:relative; }
+  .progress-bar-fill { background: linear-gradient(90deg, #2a7a4a, #44ff88); height:100%; transition: width 0.6s ease; display:flex; align-items:center; padding:0 8px; font-size:12px; font-weight:600; }
+  .progress-notes { font-size:12px; color:#9aa0b4; margin-top:4px; }
+
+  /* Aggregates Chart */
+  .aggregate-chart { margin-top:12px; }
+  .aggregate-bar { margin-bottom:12px; }
+  .aggregate-bar-header { display:flex; justify-content:space-between; margin-bottom:4px; font-size:13px; }
+  .aggregate-bar-label { font-weight:500; }
+  .aggregate-bar-count { color:#9aa0b4; font-weight:600; }
+  .aggregate-bar-bg { background:#1e1e2e; height:20px; border-radius:4px; overflow:hidden; }
+  .aggregate-bar-fill { height:100%; transition: width 0.6s ease; display:flex; align-items:center; padding:0 6px; font-size:11px; font-weight:600; }
+  .aggregate-bar-fill.category-object { background:#ffcc00; color:#000; }
+  .aggregate-bar-fill.category-facility_asset { background:#00ddff; color:#000; }
+  .aggregate-bar-fill.category-safety_issue { background:#ff4444; color:#fff; }
+  .aggregate-bar-fill.category-progress { background:#44ff88; color:#000; }
+  .aggregate-bar-fill.category-other { background:#9aa0b4; color:#fff; }
+
+  /* Global Insights */
+  .insight-card { background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:12px; margin-bottom:12px; }
+  .insight-card-title { font-weight:600; font-size:14px; margin-bottom:6px; }
+  .insight-card-desc { font-size:13px; color:#cfd5e4; margin-bottom:8px; }
+  .insight-card-confidence { font-size:12px; color:#9aa0b4; }
+  .insight-metrics { display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; }
+  .insight-metric { background:#1e1e2e; padding:6px 10px; border-radius:4px; font-size:12px; }
+  .insight-metric-key { color:#9aa0b4; }
+  .insight-metric-value { font-weight:600; color:#44ff88; margin-left:4px; }
 </style>
 </head>
 <body>
@@ -51,6 +127,7 @@
 </div>
 
 <div id="canvasWrap"><canvas id="canvas"></canvas></div>
+<div id="reportWrap"></div>
 <pre id="jsonOut"></pre>
 
 <script type="module" src="./src/index.js"></script>

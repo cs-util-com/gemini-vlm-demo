@@ -23,9 +23,6 @@ Progress:
 Attributes:
 - Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
 
-Aggregates:
-- Ensure aggregates.countsByLabel & countsByCategory match detections.
-
 Coordinates:
 - Set image.coordSystem explicitly to "pixel" if your numbers are pixels,
 	or "normalized_0_1000" if you follow Google’s 0..1000 normalization.
@@ -141,34 +138,7 @@ export const RESPONSE_SCHEMA = {
 				},
 				required: ["name","category","description","confidence"]
 			}
-		},
-		aggregates: {
-			type: "object",
-			properties: {
-				countsByLabel: {
-					type: "array",
-					items: {
-						type: "object",
-						properties: {
-							label: { type: "string" },
-							count: { type: "number" }
-						},
-						required: ["label", "count"]
-					}
-				},
-				countsByCategory: {
-					type: "array",
-					items: {
-						type: "object",
-						properties: {
-							category: { type: "string" },
-							count: { type: "number" }
-						},
-						required: ["category", "count"]
-					}
-				}
-			}
 		}
 	},
-	required: ["detections","global_insights","aggregates"]
+	required: ["detections","global_insights"]
 };

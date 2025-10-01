@@ -85,14 +85,22 @@
 
   * **Dropzone** (drag-and-drop with highlight on drag).
   * **Canvas** to show the image and overlays.
+  * **Interactive Report** panel displaying structured findings in collapsible sections.
   * **JSON panel** showing the raw response.
 
 ### 4.2 Interactions
 
 * Drag-and-drop or file-picker sets the image and renders it scaled to viewport width.
 * Clicking **Analyze** sends the image and prompt to the API, then overlays results.
+* **Interactive Report UI** appears between the canvas and raw JSON with:
+  * **Safety Issues** section (always expanded) showing high/medium/low severity cards
+  * **Progress** section with visual progress bars for regional and overall progress
+  * **All Detections** grid cards with category color-coding
+  * **Global Insights** for whole-image observations
+  * **Summary Statistics** with bar chart visualizations (calculated client-side)
+  * All sections are independently collapsible via headers
+* **Hover interactions**: Hovering over detection cards highlights their corresponding bounding box/polygon on the canvas with glow effect
 * Boxes/polygons are color-coded by category:
-
   * `object` → yellow
   * `facility_asset` → cyan
   * `safety_issue` → red
@@ -239,38 +247,13 @@
         },
         "required": ["name", "category", "description", "confidence"]
       }
-    },
-    "aggregates": {
-      "type": "object",
-      "properties": {
-        "countsByLabel": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "label": { "type": "string" },
-              "count": { "type": "number" }
-            },
-            "required": ["label", "count"]
-          }
-        },
-        "countsByCategory": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "category": { "type": "string" },
-              "count": { "type": "number" }
-            },
-            "required": ["category", "count"]
-          }
-        }
-      }
     }
   },
-  "required": ["detections", "global_insights", "aggregates"]
+  "required": ["detections", "global_insights"]
 }
 ```
+
+**Note:** The `aggregates` object has been removed from the schema. Counts by label and category are now calculated client-side from the detections array to prevent hallucination of statistics.
 
 ### 5.2 Prompt (model instruction)
 
@@ -299,13 +282,12 @@ Progress:
 Attributes:
 - Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
 
-Aggregates:
-- Ensure aggregates.countsByLabel & countsByCategory match detections.
-
 Coordinates:
 - Set image.coordSystem explicitly to "normalized_0_1000" (Google's 0..1000 normalization).
 Be conservative with confidence. Output ONLY JSON (no prose).
 ```
+
+**Note:** Aggregates (counts by label/category) are calculated **client-side** to prevent LLM hallucination of statistics.
 
 ---
 
@@ -346,14 +328,68 @@ Content-Type: application/json
 
 ---
 
-## 7) Rendering & Coordinate Math
+## 7) Interactive Report UI
 
-### 7.1 Image draw
+### 7.1 Overview
+
+Between the canvas and raw JSON output, the app displays an **interactive report panel** that organizes the structured response data into user-friendly, collapsible sections.
+
+### 7.2 Report Sections
+
+The report is organized into independently collapsible sections:
+
+1. **🚨 Safety Issues** (always expanded by default)
+   * Displays safety violations in a grid of cards
+   * Color-coded by severity: High (red), Medium (orange), Low (yellow)
+   * Shows: label, severity badge, rule violated, confidence
+   * Hover highlights the corresponding bounding box on canvas
+
+2. **📊 Progress** (collapsed by default)
+   * **Regional Progress**: Progress bars for localized detections with `category: "progress"`
+   * **Overall Progress**: Whole-image progress from `global_insights`
+   * Shows: phase name, completion percentage, visual progress bar, notes, confidence
+
+3. **🔍 All Detections** (collapsed by default)
+   * Grid of cards for every detection
+   * Category color-coding (left border): object (yellow), facility_asset (cyan), safety_issue (red), progress (green)
+   * Shows: label, confidence, category badge, custom attributes
+   * Hover highlights the corresponding bounding box/polygon on canvas
+
+4. **💡 Global Insights** (collapsed by default)
+   * Cards for whole-image observations (non-progress)
+   * Shows: name, description, confidence, related metrics
+   * Example: overall safety assessment, detected construction phase
+
+5. **📈 Summary Statistics** (collapsed by default)
+   * **Client-side calculated** counts (prevents LLM hallucination)
+   * Bar charts showing:
+     - Counts by category (object, facility_asset, safety_issue, progress)
+     - Counts by label (top 10)
+   * Color-coded bars matching category colors
+
+### 7.3 Interactive Features
+
+* **Hover to Highlight**: Mousing over any detection card highlights its bounding box/polygon on the canvas with a glow effect
+* **Collapsible Sections**: Click any section header to expand/collapse
+* **Visual Feedback**: Highlighted cards get border color change and subtle elevation
+
+### 7.4 Design Rationale
+
+* **Safety First**: Safety issues are prominently displayed at the top and expanded by default
+* **Progressive Disclosure**: Other sections are collapsed to avoid overwhelming the user
+* **Visual Hierarchy**: Color coding and spacing guide attention to critical information
+* **Interaction Before Inspection**: Report provides overview before diving into raw JSON
+
+---
+
+## 8) Rendering & Coordinate Math
+
+### 8.1 Image draw
 
 * Use `createImageBitmap(file)` to load the image.
 * Compute scale factor to fit viewport width; keep original image width/height (`naturalW`, `naturalH`) for coordinate conversion.
 
-### 7.2 Boxes
+### 8.2 Boxes
 
 * Gemini returns bboxes as **arrays** in `[ymin, xmin, ymax, xmax]` format (note: **y-first** order).
 * If `coordSystem === "normalized_0_1000"` (Gemini default): convert to pixels by:
@@ -364,12 +400,12 @@ Content-Type: application/json
   * Then convert to `{x, y, width, height}` format and scale to canvas dimensions.
 * If `coordSystem === "pixel"`: convert array to object format, then scale directly to canvas.
 
-### 7.3 Polygons
+### 8.3 Polygons
 
 * Convert each `{x,y}` similarly.
 * Require at least 3 points before drawing; close the path.
 
-### 7.4 Labels
+### 8.4 Labels
 
 * Draw a small dark rectangle above the shape with white text:
 
@@ -377,7 +413,7 @@ Content-Type: application/json
 
 ---
 
-## 8) Error Handling & Edge Cases
+## 9) Error Handling & Edge Cases
 
 * **Missing API key** → show inline error in JSON panel.
 * **No file selected** → show inline error.
@@ -389,7 +425,7 @@ Content-Type: application/json
 
 ---
 
-## 9) Security & Privacy
+## 10) Security & Privacy
 
 * Prototype only; **no production key handling**.
 * Key is typed into a password field and used only for the outbound request.
@@ -398,7 +434,7 @@ Content-Type: application/json
 
 ---
 
-## 10) Performance
+## 11) Performance
 
 * Scale image to viewport width for display; keep internal dimensions for accurate math.
 * Avoid unnecessary re-draws (base image is re-drawn once before overlaying).
@@ -407,11 +443,11 @@ Content-Type: application/json
 
 ---
 
-## 11) Testing Plan
+## 12) Testing Plan
 
 > The app is a single file with minimal logic. Tests focus on **deterministic helpers** and **schema conformance**.
 
-### 11.1 Unit-like tests (manual/automated)
+### 12.1 Unit-like tests (manual/automated)
 
 * **Coordinate conversion**
 
@@ -423,51 +459,58 @@ Content-Type: application/json
 * **Label formatting**
 
   * Confidence rounding and truncation for long labels.
+* **Client-side aggregates**
+
+  * Given a set of detections, verify `calculateAggregates()` produces correct counts by label and category.
+  * Test with empty arrays, single items, and duplicate labels.
 * **Resilience**
 
   * JSON parsing with and without code fences.
   * Fallback from snake_case to camelCase schema field names.
 
-### 11.2 Schema validation
+### 12.2 Schema validation
 
 * Use a lightweight schema validator (optional) in a separate test page to validate the **model output** against the schema.
 
   * For the demo, basic runtime guards suffice; a future iteration can integrate AJV in a dev-only page.
 
-### 11.3 UX checks (manual)
+### 12.3 UX checks (manual)
 
 * Drag-and-drop focus/hover state.
 * Keyboard navigation (tabbing through controls).
 * Color contrast for overlay labels on bright/dark images.
+* Report UI collapsible sections work correctly.
+* Hover over detection cards highlights corresponding canvas overlays.
 
-### 11.4 Example Given/When/Then (manual script)
+### 12.4 Example Given/When/Then (manual script)
 
-* **Given** an image with a visible exit sign and ladder, **when** Analyze is pressed, **then** at least two detections appear, with `facility_asset` and `object` categories, each with reasonable boxes and confidence > 0.5, and `aggregates.countsByCategory.facility_asset >= 1`.
-* **Given** a safety violation image (no hard hat), **when** Analyze is pressed, **then** a `safety_issue` is present with `safety.isViolation=true` and a non-empty `safety.rule`.
+* **Given** an image with a visible exit sign and ladder, **when** Analyze is pressed, **then** at least two detections appear, with `facility_asset` and `object` categories, each with reasonable boxes and confidence > 0.5, and the report UI shows correct client-side calculated counts in the aggregates section.
+* **Given** a safety violation image (no hard hat), **when** Analyze is pressed, **then** a `safety_issue` is present with `safety.isViolation=true` and a non-empty `safety.rule`, displayed prominently in the Safety Issues section.
+* **Given** a construction site image, **when** hovering over a detection card in the report, **then** the corresponding bounding box on the canvas is highlighted with a glow effect.
 
 ---
 
-## 12) Build & Run
+## 13) Build & Run
 
 * No build step. Open `index.html` in a modern browser.
 * Paste API key, choose model (default `gemini-2.5-pro`), drop an image, click **Analyze**.
 
 ---
 
-## 13) Logging & Telemetry
+## 14) Logging & Telemetry
 
 * Console logs limited to development only.
 * JSON panel acts as a visible log of the last request’s structured output.
 
 ---
 
-## 14) Internationalization
+## 15) Internationalization
 
 * Static English UI. Schema and prompt are language-agnostic (labels are freeform; model may output English labels by default).
 
 ---
 
-## 15) Future Enhancements
+## 16) Future Enhancements
 
 * **Edge proxy** (Cloudflare/Vercel) to protect the API key; same client can call the proxy instead of Google directly.
 * **Files API** integration for large files and reuse across requests.
@@ -480,7 +523,7 @@ Content-Type: application/json
 
 ---
 
-## 16) Acceptance Criteria
+## 17) Acceptance Criteria
 
 * Page loads without errors on latest Chrome/Edge/Firefox.
 * With a valid API key and a test image:
@@ -492,7 +535,7 @@ Content-Type: application/json
 
 ---
 
-## 17) Risks
+## 18) Risks
 
 * Client-only key exposure (acceptable for prototype; clearly marked).
 * Model variability may produce low-quality or empty results on some images.
@@ -500,7 +543,7 @@ Content-Type: application/json
 
 ---
 
-## 18) Open Questions
+## 19) Open Questions
 
 1. **Coordinate convention preference:** Should the app **force** `"pixel"` outputs by prompt, or keep dual support (pixel + normalized)?
 2. **Default thresholds:** Should a UI control hide detections below a confidence threshold (e.g., < 0.4)?
