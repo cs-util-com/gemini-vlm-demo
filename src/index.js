@@ -1,6 +1,12 @@
 /* istanbul ignore file */
 
 import { AEC_PROMPT, RESPONSE_SCHEMA } from './aec-schema.js';
+import {
+	toCanvasBox,
+	toCanvasPolygon,
+	ensureCoordSystem,
+	ensureCoordOrigin
+} from './geometry.js';
 
 // ---------- UI Elements ----------
 const apiKeyEl = document.getElementById('apiKey');
@@ -78,39 +84,6 @@ async function drawImage(file) {
 
 function setDrag(drag) {
 	dropzone.classList.toggle('drag', !!drag);
-}
-
-function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
-
-// Convert bbox coords to canvas pixels given coordSystem + display scale
-function toCanvasBox(b, coordSystem, displayScaleX, displayScaleY, imgW, imgH) {
-	if (!b) return null;
-	let { x, y, width, height } = b;
-	if (coordSystem === 'normalized_0_1000') {
-		x = (x / 1000) * imgW;
-		y = (y / 1000) * imgH;
-		width  = (width  / 1000) * imgW;
-		height = (height / 1000) * imgH;
-	}
-	// Scale to displayed canvas
-	x *= displayScaleX; y *= displayScaleY;
-	width *= displayScaleX; height *= displayScaleY;
-	// Clamp to canvas
-	x = clamp(x, 0, canvas.width); y = clamp(y, 0, canvas.height);
-	width = clamp(width, 0, canvas.width - x); height = clamp(height, 0, canvas.height - y);
-	return { x, y, width, height };
-}
-
-function toCanvasPolygon(poly, coordSystem, displayScaleX, displayScaleY, imgW, imgH) {
-	if (!Array.isArray(poly)) return null;
-	return poly.map(p => {
-		let { x, y } = p;
-		if (coordSystem === 'normalized_0_1000') {
-			x = (x / 1000) * imgW;
-			y = (y / 1000) * imgH;
-		}
-		return { x: x * displayScaleX, y: y * displayScaleY };
-	});
 }
 
 function drawLabelBox(x, y, text) {
@@ -225,12 +198,6 @@ function extractJSONFromResponse(resp) {
 	return JSON.parse(raw);
 }
 
-function ensureCoordSystem(res, fallback = 'pixel') {
-	// Return coordSystem to use for drawing
-	const cs = res?.image?.coordSystem;
-	return (cs === 'pixel' || cs === 'normalized_0_1000') ? cs : fallback;
-}
-
 // ---------- Event wiring ----------
 pickBtn.addEventListener('click', () => fileEl.click());
 
@@ -259,17 +226,15 @@ apiKeyEl.addEventListener('input', e => {
 	persistApiKey(e.target.value);
 });
 
-	runBtn.addEventListener('click', async () => {
-		const apiKey = apiKeyEl.value.trim();
-		const model  = modelEl.value.trim() || 'gemini-2.5-pro';
-		persistApiKey(apiKey);
-		if (!apiKey) return logJson({ error: 'Missing API key' }, 'Error');
+runBtn.addEventListener('click', async () => {
+	const apiKey = apiKeyEl.value.trim();
+	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+	persistApiKey(apiKey);
+	if (!apiKey) return logJson({ error: 'Missing API key' }, 'Error');
 	if (!currentFile) return logJson({ error: 'No image selected' }, 'Error');
 
 	// Redraw base image before overlays
 	if (currentImageBitmap) {
-		const scaleX = canvas.width / naturalW;
-		const scaleY = canvas.height / naturalH;
 		ctx.clearRect(0,0,canvas.width,canvas.height);
 		ctx.drawImage(currentImageBitmap, 0, 0, canvas.width, canvas.height);
 	}
@@ -285,7 +250,10 @@ apiKeyEl.addEventListener('input', e => {
 		if (parsed.image.width == null)  parsed.image.width  = naturalW;
 		if (parsed.image.height == null) parsed.image.height = naturalH;
 
-		const coordSystem = ensureCoordSystem(parsed, 'pixel');
+		// Gemini's standard: normalized_0_1000 with top-left origin
+		const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
+		const coordOrigin = ensureCoordOrigin(parsed, 'top-left');
+		if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
 
 		// Draw detections
 		const scaleX = canvas.width / naturalW;
@@ -297,11 +265,21 @@ apiKeyEl.addEventListener('input', e => {
 			const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
 
 			if (d.bbox) {
-				const b = toCanvasBox(d.bbox, coordSystem, scaleX, scaleY, naturalW, naturalH);
+				const b = toCanvasBox(
+					d.bbox,
+					coordSystem,
+					scaleX,
+					scaleY,
+					naturalW,
+					naturalH,
+					coordOrigin,
+					canvas.width,
+					canvas.height
+				);
 				if (b) drawBox(b, label, color);
 			}
 			if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
-				const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH);
+				const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
 				if (pts) drawPolygon(pts, label, color);
 			}
 		}

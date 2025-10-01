@@ -41,7 +41,7 @@ export const RESPONSE_SCHEMA = {
 				width: { type: "number", nullable: true },
 				height: { type: "number", nullable: true },
 				fileName: { type: "string", nullable: true },
-				coordSystem: { type: "string", enum: ["pixel", "normalized_0_1000"], nullable: true }
+				coordSystem: { type: "string", enum: ["normalized_0_1000"], nullable: true, description: "Always normalized_0_1000" }
 			},
 			nullable: true
 		},
@@ -55,14 +55,17 @@ export const RESPONSE_SCHEMA = {
 					category: { type: "string", enum: ["object","facility_asset","safety_issue","progress","other"] },
 					confidence: { type: "number" },
 					bbox: {
-						type: "object",
-						properties: { x:{type:"number"}, y:{type:"number"}, width:{type:"number"}, height:{type:"number"} },
-						required: ["x","y","width","height"],
+						type: "array",
+						items: { type: "number" },
+						minItems: 4,
+						maxItems: 4,
+						description: "[ymin, xmin, ymax, xmax] normalized 0-1000",
 						nullable: true
 					},
 					polygon: {
 						type: "array",
 						items: { type:"object", properties:{ x:{type:"number"}, y:{type:"number"} }, required:["x","y"] },
+						description: "Array of {x,y} points, each normalized 0-1000",
 						nullable: true
 					},
 					safety: {
