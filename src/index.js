@@ -7,6 +7,14 @@ import {
 	ensureCoordSystem,
 	ensureCoordOrigin
 } from './geometry.js';
+import {
+	colorForCategory,
+	extractJSONFromResponse,
+	calculateDisplayScale,
+	formatJsonOutput,
+	extractBase64FromDataUrl,
+	prepareDetectionData
+} from './ui-utils.js';
 
 // ---------- UI Elements ----------
 const apiKeyEl = document.getElementById('apiKey');
@@ -27,8 +35,7 @@ let naturalW = 0, naturalH = 0;
 
 // ---------- Helpers ----------
 function logJson(obj, note) {
-	const head = note ? `// ${note}\n` : '';
-	jsonOut.textContent = head + JSON.stringify(obj, null, 2);
+	jsonOut.textContent = formatJsonOutput(obj, note);
 }
 
 function getStoredApiKey() {
@@ -60,7 +67,7 @@ if (storedApiKey) {
 function toBase64(file) {
 	return new Promise((res, rej) => {
 		const r = new FileReader();
-		r.onload = () => res(String(r.result).split(',')[1]); // drop "data:mime;base64,"
+		r.onload = () => res(extractBase64FromDataUrl(String(r.result)));
 		r.onerror = rej;
 		r.readAsDataURL(file);
 	});
@@ -72,8 +79,7 @@ async function drawImage(file) {
 	naturalW = bmp.width;
 	naturalH = bmp.height;
 	// Fit to viewport width but keep full resolution internally
-	const maxW = Math.min(window.innerWidth - 60, naturalW);
-	const scale = maxW / naturalW;
+	const scale = calculateDisplayScale(naturalW, window.innerWidth);
 	canvas.width  = Math.round(naturalW * scale);
 	canvas.height = Math.round(naturalH * scale);
 	// Draw scaled image
@@ -124,15 +130,7 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
-function colorForCategory(cat) {
-	switch (cat) {
-		case 'safety_issue': return '#ff5b5b';
-		case 'facility_asset': return '#5bd1ff';
-		case 'progress': return '#a1ff5b';
-		case 'object': return '#ffd05b';
-		default: return '#cccccc';
-	}
-}
+// colorForCategory is now imported from ui-utils.js
 
 async function callGeminiREST({ apiKey, model, file }) {
 	const base64 = await toBase64(file);
@@ -187,16 +185,7 @@ async function callGeminiREST({ apiKey, model, file }) {
 	}
 }
 
-function extractJSONFromResponse(resp) {
-	// Expect JSON as text in first candidate part
-	const c = resp?.candidates?.[0];
-	const parts = c?.content?.parts || [];
-	const textPart = parts.find(p => typeof p.text === 'string');
-	if (!textPart) throw new Error('No text JSON found in response.');
-	// Some responses may wrap JSON in backticks by mistake; strip if needed
-	const raw = textPart.text.trim().replace(/^```json\s*|\s*```$/g, '');
-	return JSON.parse(raw);
-}
+// extractJSONFromResponse is now imported from ui-utils.js
 
 // ---------- Event wiring ----------
 pickBtn.addEventListener('click', () => fileEl.click());
@@ -246,9 +235,7 @@ runBtn.addEventListener('click', async () => {
 		const parsed = extractJSONFromResponse(resp);
 
 		// Fill in image.width/height if missing (helps downstream)
-		if (!parsed.image) parsed.image = {};
-		if (parsed.image.width == null)  parsed.image.width  = naturalW;
-		if (parsed.image.height == null) parsed.image.height = naturalH;
+		prepareDetectionData(parsed, naturalW, naturalH);
 
 		// Gemini's standard: normalized_0_1000 with top-left origin
 		const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
