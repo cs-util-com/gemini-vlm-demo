@@ -26,9 +26,15 @@ export function calculateAggregates(detections) {
 }
 
 /**
- * Render the interactive report UI
+ * Render the interactive report UI for a session (multi-image or single-image)
  */
-export function renderReportUI(data) {
+export function renderReportUI(data, session = null) {
+	// Multi-image session mode
+	if (session && session.images && session.images.length > 1) {
+		return renderSessionReport(session);
+	}
+
+	// Single-image mode (original behavior)
 	const detections = Array.isArray(data.detections) ? data.detections : [];
 	const insights = Array.isArray(data.global_insights) ? data.global_insights : [];
 	const aggregates = calculateAggregates(detections);
@@ -290,6 +296,145 @@ function escapeHtml(text) {
 	const div = document.createElement('div');
 	div.textContent = text;
 	return div.innerHTML;
+}
+
+/**
+ * Render session report for multiple images
+ */
+function renderSessionReport(session) {
+	const agg = session.sessionAggregates;
+	const completedImages = session.images.filter(img => img.status === 'completed');
+	
+	let html = '';
+
+	// Session Overview Section
+	html += renderSection('session-overview', '📊 Session Overview', renderSessionOverview(session, agg), false);
+
+	// Export Controls Section
+	html += renderSection('export', '💾 Export Data', renderExportControls(), false);
+
+	// Per-Image Sections
+	completedImages.forEach((img, index) => {
+		const imageTitle = `🖼️ Image ${index + 1}: ${img.filename}`;
+		const imageReport = renderSingleImageReport(img);
+		html += renderSection(`image-${img.id}`, imageTitle, imageReport, true);
+	});
+
+	return html;
+}
+
+/**
+ * Render session overview section
+ */
+function renderSessionOverview(session, agg) {
+	const totalImages = session.images.length;
+	const completedCount = session.images.filter(img => img.status === 'completed').length;
+	const errorCount = session.images.filter(img => img.status === 'error').length;
+
+	let html = '<div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px; margin-bottom:20px;">';
+
+	// Summary cards
+	html += `
+		<div style="background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:16px;">
+			<div style="font-size:12px; color:#9aa0b4; margin-bottom:4px;">Total Images</div>
+			<div style="font-size:24px; font-weight:600;">${completedCount} / ${totalImages}</div>
+			${errorCount > 0 ? `<div style="font-size:12px; color:#ff4444; margin-top:4px;">${errorCount} failed</div>` : ''}
+		</div>
+		<div style="background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:16px;">
+			<div style="font-size:12px; color:#9aa0b4; margin-bottom:4px;">Total Detections</div>
+			<div style="font-size:24px; font-weight:600;">${agg.totalDetections}</div>
+		</div>
+		<div style="background:#141420; border:1px solid #ff4444; border-radius:8px; padding:16px;">
+			<div style="font-size:12px; color:#9aa0b4; margin-bottom:4px;">Safety Issues</div>
+			<div style="font-size:24px; font-weight:600;">${agg.safetyIssues.high + agg.safetyIssues.medium + agg.safetyIssues.low}</div>
+			<div style="font-size:11px; margin-top:4px;">
+				<span style="color:#ff4444;">High: ${agg.safetyIssues.high}</span> | 
+				<span style="color:#ffaa44;">Med: ${agg.safetyIssues.medium}</span> | 
+				<span style="color:#ffdd44;">Low: ${agg.safetyIssues.low}</span>
+			</div>
+		</div>
+	`;
+	html += '</div>';
+
+	// Image heatmap
+	if (agg.imageStats && agg.imageStats.length > 0) {
+		html += '<h4 style="margin:20px 0 12px; font-size:14px; color:#9aa0b4;">Images Overview</h4>';
+		html += '<div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap:8px;">';
+		
+		agg.imageStats.forEach((stat) => {
+			const hasSafety = stat.safetyIssueCount > 0;
+			const borderColor = hasSafety ? '#ff4444' : '#2a2a3b';
+			
+			html += `
+				<div style="background:#141420; border:2px solid ${borderColor}; border-radius:6px; padding:8px; font-size:11px;">
+					<div style="font-weight:600; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(stat.filename)}</div>
+					<div style="color:#9aa0b4;">Detections: ${stat.detectionCount}</div>
+					${hasSafety ? `<div style="color:#ff4444;">⚠️ Safety: ${stat.safetyIssueCount}</div>` : ''}
+					${stat.progressItemCount > 0 ? `<div style="color:#44ff88;">📊 Progress: ${stat.progressItemCount}</div>` : ''}
+				</div>
+			`;
+		});
+		
+		html += '</div>';
+	}
+
+	// Session aggregates
+	if (agg.categoryCounts && agg.categoryCounts.length > 0) {
+		html += '<h4 style="margin:20px 0 12px; font-size:14px; color:#9aa0b4;">Category Distribution</h4>';
+		html += renderAggregates({ countsByCategory: agg.categoryCounts, countsByLabel: [] });
+	}
+
+	return html;
+}
+
+/**
+ * Render export controls
+ */
+function renderExportControls() {
+	return `
+		<div style="display:flex; gap:12px; flex-wrap:wrap;">
+			<button id="exportJSON" style="background:#4a4aff; color:#fff; border:none; border-radius:8px; padding:12px 24px; font-size:14px; font-weight:600; cursor:pointer;">
+				Export JSON
+			</button>
+			<button id="exportCSV" style="background:#44ff88; color:#000; border:none; border-radius:8px; padding:12px 24px; font-size:14px; font-weight:600; cursor:pointer;">
+				Export CSV
+			</button>
+		</div>
+	`;
+}
+
+/**
+ * Render single image report (for per-image subsections)
+ */
+function renderSingleImageReport(img) {
+	const detections = img.detections || [];
+	const insights = img.parsedData?.global_insights || [];
+
+	const safetyIssues = detections.filter(d => d.category === 'safety_issue');
+	const progressItems = detections.filter(d => d.category === 'progress' && d.progress);
+	const progressInsights = insights.filter(i => i.category === 'progress');
+
+	let html = '';
+
+	// Safety (if any)
+	if (safetyIssues.length > 0) {
+		html += '<h4 style="margin:0 0 12px; font-size:14px; color:#9aa0b4;">Safety Issues</h4>';
+		html += renderSafetyCards(safetyIssues);
+	}
+
+	// Progress (if any)
+	if (progressItems.length > 0 || progressInsights.length > 0) {
+		html += '<h4 style="margin:20px 0 12px; font-size:14px; color:#9aa0b4;">Progress</h4>';
+		html += renderProgressSection(progressItems, progressInsights);
+	}
+
+	// All Detections
+	if (detections.length > 0) {
+		html += '<h4 style="margin:20px 0 12px; font-size:14px; color:#9aa0b4;">All Detections</h4>';
+		html += renderDetectionCards(detections);
+	}
+
+	return html;
 }
 
 /**
