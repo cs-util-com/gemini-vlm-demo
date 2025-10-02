@@ -18,9 +18,11 @@
   #canvasWrap { margin: 16px 20px; overflow:auto; }
   #canvas { max-width: 100%; display:block; }
   #jsonOut { margin: 16px 20px 80px; background:#0f0f18; padding: 16px; border-radius: 12px; border:1px solid #1e1e2e; white-space: pre-wrap; word-break: break-word; }
-  small.hint { color:#9aa0b4; }
-  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-  .spacer { flex:1; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label { font-size: 14px; font-weight: 500; color: #cfd5e4; }
+  .form-group .hint-inline { font-size: 12px; }
+  .header-controls { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .header-note { font-size: 12px; text-align: right; max-width: 220px; }
 
   /* Report UI */
   #reportWrap { margin: 16px 20px; }
@@ -101,21 +103,23 @@
 </head>
 <body>
 <header>
-  <div class="row">
-    <label>Gemini API Key:
+  <div class="header-controls">
+    <div class="form-group">
+      <label for="apiKey">Gemini API Key</label>
       <input id="apiKey" type="password" placeholder="Paste key (stored locally in this browser)" />
-      <small class="hint hint-inline">Get your key from <a href="https://aistudio.google.com/app/api-keys" target="_blank" rel="noreferrer noopener">Google AI Studio</a>. The key is stored only in your browser.</small>
-    </label>
-    <label>Model:
+      <small class="hint hint-inline">Get a key from <a href="https://aistudio.google.com/app/api-keys" target="_blank" rel="noreferrer noopener">Google AI Studio</a>.</small>
+    </div>
+    <div class="form-group">
+      <label for="model">Model</label>
       <select id="model">
-        <option>gemini-2.5-pro</option>
-        <option>gemini-2.5-flash</option>
-        <option>gemini-2.5-flash-lite</option>
+        <option>gemini-1.5-flash-latest</option>
+        <option>gemini-1.5-pro-latest</option>
+        <option>gemini-pro</option>
       </select>
-    </label>
+    </div>
   </div>
   <div class="spacer"></div>
-  <small class="hint">Prototype only: key lives in this page session, never sent anywhere except Google’s API.</small>
+  <small class="hint header-note">This is a prototype. Your key is stored in this browser and only sent to Google's API.</small>
 </header>
 
 <div id="dropzone">
