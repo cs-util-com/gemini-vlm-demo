@@ -57,11 +57,13 @@ describe('geometry helpers', () => {
 
 	test('toCanvasBox returns null when bbox is missing', () => {
 		expect(toCanvasBox(null, 'pixel', 1, 1, naturalW, naturalH)).toBeNull();
-	});  test('toCanvasBox respects normalized_0_1000 coord system and scales output', () => {
-    const bbox = { x: 500, y: 250, width: 100, height: 200 };
-    const result = toCanvasBox(bbox, 'normalized_0_1000', 0.5, 0.5, 400, 200, 'top-left', 200, 100);
-    expect(result).toEqual({ x: 100, y: 25, width: 20, height: 20 });
-  });
+	});
+
+	test('toCanvasBox respects normalized_0_1000 coord system and scales output', () => {
+		const bbox = { x: 500, y: 250, width: 100, height: 200 };
+		const result = toCanvasBox(bbox, 'normalized_0_1000', 0.5, 0.5, 400, 200, 'top-left', 200, 100);
+		expect(result).toEqual({ x: 100, y: 25, width: 20, height: 20 });
+	});
 
   test('toCanvasBox clamps values that exceed the canvas bounds', () => {
     const bbox = { x: 180, y: 90, width: 50, height: 30 };
