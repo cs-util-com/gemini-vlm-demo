@@ -120,9 +120,8 @@
 ### 5.1 Unified AEC Structured Output Schema
 
 **Type:** OpenAPI-style Schema object (as required by the Gemini REST `response_schema`).
-**Coordinate systems supported:**
+**Coordinate system supported:**
 
-* `"pixel"` → pixel units relative to the original image size.
 * `"normalized_0_1000"` → normalized coordinates [0..1000] (converted to pixels in the renderer).
 
 ```json
@@ -398,7 +397,7 @@ The report is organized into independently collapsible sections:
   * `xMaxPx = (xmax / 1000) * naturalW`
   * `yMaxPx = (ymax / 1000) * naturalH`
   * Then convert to `{x, y, width, height}` format and scale to canvas dimensions.
-* If `coordSystem === "pixel"`: convert array to object format, then scale directly to canvas.
+* The unified schema enforces `coordSystem: "normalized_0_1000"`, so all box math assumes that normalized range.
 
 ### 8.3 Polygons
 
@@ -452,7 +451,6 @@ The report is organized into independently collapsible sections:
 * **Coordinate conversion**
 
   * Given `normalized_0_1000` bbox and known `naturalW/H`, verify pixel conversion.
-  * Given `pixel` bbox, verify scale to canvas space.
 * **Polygon conversion**
 
   * Convert known 3-point polygon in both coord systems; verify resulting screen points.
@@ -545,11 +543,10 @@ The report is organized into independently collapsible sections:
 
 ## 19) Open Questions
 
-1. **Coordinate convention preference:** Should the app **force** `"pixel"` outputs by prompt, or keep dual support (pixel + normalized)?
-2. **Default thresholds:** Should a UI control hide detections below a confidence threshold (e.g., < 0.4)?
-3. **Polygon usage:** In v1, keep polygons optional—should the prompt steer strongly towards **bbox first** to reduce UI complexity?
-4. **Label taxonomy:** Remain fully freeform, or add light guidance for common facility assets (e.g., “exit sign”, “fire extinguisher”) to improve consistency across runs?
-5. **Safety rules catalog:** Provide a short, curated list of common safety rules to encourage consistent `safety.rule` strings (e.g., PPE categories, ladder angle rule)?
-6. **Download artifacts:** Add “Download JSON” and “Download annotated PNG” buttons?
-7. **Public demo hosting:** If hosted, should a **tiny proxy** be added immediately to avoid teaching bad key practices?
+1. **Default thresholds:** Should a UI control hide detections below a confidence threshold (e.g., < 0.4)?
+2. **Polygon usage:** In v1, keep polygons optional—should the prompt steer strongly towards **bbox first** to reduce UI complexity?
+3. **Label taxonomy:** Remain fully freeform, or add light guidance for common facility assets (e.g., “exit sign”, “fire extinguisher”) to improve consistency across runs?
+4. **Safety rules catalog:** Provide a short, curated list of common safety rules to encourage consistent `safety.rule` strings (e.g., PPE categories, ladder angle rule)?
+5. **Download artifacts:** Add “Download JSON” and “Download annotated PNG” buttons?
+6. **Public demo hosting:** If hosted, should a **tiny proxy** be added immediately to avoid teaching bad key practices?
 
