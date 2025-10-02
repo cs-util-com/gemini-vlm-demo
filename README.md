@@ -1,8 +1,8 @@
 # Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Pro)
 
-**Status:** Draft v1 (implementation complete)
+**Status:** v2 (multi-image support implemented)
 **Default model:** `gemini-2.5-pro`
-**Scope:** Single-page web demo (no backend) that accepts an image, sends it to Gemini 2.5 with a strict JSON schema, draws bounding boxes/polygons on a canvas, and displays the full structured JSON (including whole-image insights).
+**Scope:** Single-page web demo (no backend) that accepts one or multiple images (up to 20), sends them to Gemini 2.5 with a strict JSON schema, draws bounding boxes/polygons on a canvas, displays structured reports with session-level aggregates, and supports CSV/JSON export.
 
 ---
 
@@ -12,10 +12,11 @@
 
 * Provide a minimal, self-contained **vanilla JS** demo that:
 
-  * Accepts a user-supplied image via drag-and-drop or file picker.
+  * Accepts user-supplied images (1-20) via drag-and-drop or file picker.
   * Calls **Gemini 2.5 Pro** directly via REST with a **strict structured-output schema**.
   * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) and **global insights** (image-level progress/safety summaries).
   * Draws **bounding boxes and polygons** on a `<canvas>` overlay and shows the **raw JSON** below the image.
+  * **Multi-image mode**: processes up to 20 images concurrently (max 10 parallel API calls), displays session-level aggregates, and supports CSV/JSON export.
 * Keep the schema **generic** so new AEC findings can be expressed without changing the app.
 * Ship with a **BYO API key** flow (prototype only; no server).
 
@@ -37,13 +38,17 @@
 
 ### 2.2 Use Cases (supported in one run)
 
-* **General object detection** (e.g., ladders, scaffolds, ducts, tools).
-* **Facility asset inventory** (e.g., exit signs, fire extinguishers) with counts.
-* **Safety findings** (PPE compliance, ladder angle, blocked exits, unguarded edges) with severity.
-* **Progress insights**
+* **Single-image analysis**:
+  * General object detection (e.g., ladders, scaffolds, ducts, tools).
+  * Facility asset inventory (e.g., exit signs, fire extinguishers) with counts.
+  * Safety findings (PPE compliance, ladder angle, blocked exits, unguarded edges) with severity.
+  * Progress insights (per-region and whole-image progress).
 
-  * Per-region progress: e.g., drywall or MEP rough-in in a portion of the image.
-  * Whole-image progress: overall phase and percent complete.
+* **Multi-image analysis** (1-20 images):
+  * Analyze multiple construction site photos in parallel.
+  * Session-level aggregates: total detections, safety issues by severity, category/label distribution.
+  * Image heatmap showing which images contain safety or progress findings.
+  * Export session data as CSV or JSON for further analysis.
 
 ---
 
@@ -112,6 +117,40 @@
 * Keyboard focusable controls, visible focus rings (browser default).
 * Text labels for buttons and inputs.
 * High-contrast overlay labels (dark background with white text).
+
+### 4.4 Multi-Image Mode
+
+When users select 2-20 images, the app switches to **multi-image session mode**:
+
+**Gallery & Progress:**
+* Dropzone hidden, replaced with horizontal thumbnail gallery
+* Progress bar displays: "Analyzing X of N images..." with percentage
+* Each thumbnail shows: image preview, filename, status chip (queued/analyzing/completed/error)
+* Click thumbnail to view that image with overlays in main canvas
+
+**Concurrent Processing:**
+* Processes up to 10 images in parallel (hardcoded concurrency limit)
+* Automatically queues remaining images
+* Report appears only after all images are analyzed (or failed)
+
+**Session Report Structure:**
+1. **Session Overview** (always expanded):
+   - Summary cards: total images, total detections, safety issues breakdown
+   - Image heatmap: grid showing which images have safety/progress findings
+   - Category distribution chart across all images
+
+2. **Export Controls** (always expanded):
+   - "Export JSON" button → downloads session data with all images and aggregates
+   - "Export CSV" button → downloads flat CSV with one row per detection
+
+3. **Per-Image Sections** (collapsed by default):
+   - Each image gets its own subsection: "Image N: filename.jpg"
+   - Contains same report structure as single-image mode
+   - Preserves hover↔canvas highlighting when that image is active
+
+**Export Formats:**
+* **JSON**: Full session data including `sessionId`, timestamp, aggregates, and array of image results
+* **CSV**: Flat table with columns: SessionID, ImageID, ImageName, DetectionID, Label, Category, Confidence, SafetySeverity, SafetyRule, ProgressPhase, ProgressPercent
 
 ---
 
