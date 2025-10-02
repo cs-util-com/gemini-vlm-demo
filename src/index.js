@@ -24,8 +24,6 @@ import {
 const apiKeyEl = document.getElementById('apiKey');
 const modelEl  = document.getElementById('model');
 const fileEl   = document.getElementById('file');
-const pickBtn  = document.getElementById('pickBtn');
-const runBtn   = document.getElementById('runBtn');
 const dropzone = document.getElementById('dropzone');
 const canvas   = document.getElementById('canvas');
 const ctx      = canvas.getContext('2d');
@@ -40,6 +38,9 @@ let currentDetections = [];
 let currentParsedData = null;
 let naturalW = 0, naturalH = 0;
 let highlightedDetectionId = null;
+let isAnalyzing = false;
+let analysisQueued = false;
+let pendingApiKeyAnalysis = false;
 
 // ---------- Helpers ----------
 function logJson(obj, note) {
@@ -258,48 +259,40 @@ async function callGeminiREST({ apiKey, model, file }) {
 
 // extractJSONFromResponse is now imported from ui-utils.js
 
-// ---------- Event wiring ----------
-pickBtn.addEventListener('click', () => fileEl.click());
-
-dropzone.addEventListener('dragover', e => { e.preventDefault(); setDrag(true); });
-dropzone.addEventListener('dragleave', () => setDrag(false));
-dropzone.addEventListener('drop', async e => {
-	e.preventDefault(); setDrag(false);
-	const f = e.dataTransfer.files?.[0];
-	if (f) {
-		currentFile = f;
-		await drawImage(f);
-		logJson({ message: 'Image ready. Click "Analyze" to run the model.' });
-	}
-});
-
-fileEl.addEventListener('change', async e => {
-	const f = e.target.files?.[0];
-	if (f) {
-		currentFile = f;
-		await drawImage(f);
-		logJson({ message: 'Image ready. Click "Analyze" to run the model.' });
-	}
-});
-
-apiKeyEl.addEventListener('input', e => {
-	persistApiKey(e.target.value);
-});
-
-runBtn.addEventListener('click', async () => {
+async function analyzeCurrentImage({ silentOnMissingKey = false } = {}) {
 	const apiKey = apiKeyEl.value.trim();
 	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
-	persistApiKey(apiKey);
-	if (!apiKey) return logJson({ error: 'Missing API key' }, 'Error');
-	if (!currentFile) return logJson({ error: 'No image selected' }, 'Error');
 
-	// Clear previous results
+	if (!apiKey) {
+		if (!silentOnMissingKey) {
+			logJson({ error: 'Missing API key' }, 'Error');
+		}
+		return;
+	}
+
+	if (!currentFile) {
+		if (!silentOnMissingKey) {
+			logJson({ error: 'No image selected' }, 'Error');
+		}
+		return;
+	}
+
+	persistApiKey(apiKey);
+	pendingApiKeyAnalysis = false;
+
+	if (isAnalyzing) {
+		analysisQueued = true;
+		return;
+	}
+
+	isAnalyzing = true;
+	analysisQueued = false;
+
 	clearReport();
 	currentDetections = [];
 	currentParsedData = null;
 	highlightedDetectionId = null;
 
-	// Redraw base image before overlays
 	if (currentImageBitmap) {
 		ctx.clearRect(0,0,canvas.width,canvas.height);
 		ctx.drawImage(currentImageBitmap, 0, 0, canvas.width, canvas.height);
@@ -311,26 +304,20 @@ runBtn.addEventListener('click', async () => {
 		const resp = await callGeminiREST({ apiKey, model, file: currentFile });
 		const parsed = extractJSONFromResponse(resp);
 
-		// Fill in image.width/height if missing (helps downstream)
 		prepareDetectionData(parsed, naturalW, naturalH);
 
-		// Gemini's standard: normalized_0_1000 with top-left origin
 		const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
 		ensureCoordOrigin(parsed, 'top-left');
 		if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
 
-		// Store current data
 		currentParsedData = parsed;
 		currentDetections = Array.isArray(parsed.detections) ? parsed.detections : [];
 
-		// Draw initial overlays
 		drawOverlays();
 
-		// Render interactive report
 		const reportHtml = renderReportUI(parsed);
 		reportWrap.innerHTML = reportHtml;
 
-		// Setup interactions
 		setupReportInteractions(
 			reportWrap,
 			currentDetections,
@@ -344,14 +331,78 @@ runBtn.addEventListener('click', async () => {
 			}
 		);
 
-		// Show full JSON (including any global_insights that don't map to boxes)
 		logJson(parsed, 'Model JSON');
-
 	} catch (err) {
 		clearReport();
 		logJson({ error: String(err?.message || err) }, 'Error');
+	} finally {
+		isAnalyzing = false;
+		if (analysisQueued) {
+			analysisQueued = false;
+			await analyzeCurrentImage({ silentOnMissingKey: true });
+		}
+	}
+}
+
+async function handleFileSelection(file) {
+	if (!file) return;
+
+	currentFile = file;
+	currentParsedData = null;
+	currentDetections = [];
+	highlightedDetectionId = null;
+	analysisQueued = false;
+
+	try {
+		await drawImage(file);
+	} catch (err) {
+		logJson({ error: `Failed to load image: ${String(err?.message || err)}` }, 'Error');
+		return;
+	}
+
+	clearReport();
+
+	const apiKey = apiKeyEl.value.trim();
+	if (!apiKey) {
+		pendingApiKeyAnalysis = true;
+		logJson({ message: 'Image loaded. Enter your API key to start analysis.' });
+		return;
+	}
+
+	pendingApiKeyAnalysis = false;
+	await analyzeCurrentImage({ silentOnMissingKey: true });
+}
+
+// ---------- Event wiring ----------
+dropzone.addEventListener('click', () => fileEl.click());
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); setDrag(true); });
+dropzone.addEventListener('dragleave', () => setDrag(false));
+dropzone.addEventListener('drop', async e => {
+	e.preventDefault();
+	setDrag(false);
+	const f = e.dataTransfer.files?.[0];
+	if (f) {
+		await handleFileSelection(f);
+	}
+});
+
+fileEl.addEventListener('change', async e => {
+	const f = e.target.files?.[0];
+	if (f) {
+		await handleFileSelection(f);
+		e.target.value = '';
+	}
+});
+
+apiKeyEl.addEventListener('input', async e => {
+	const value = e.target.value;
+	persistApiKey(value);
+	if (pendingApiKeyAnalysis && value.trim() && currentFile && !isAnalyzing) {
+		pendingApiKeyAnalysis = false;
+		await analyzeCurrentImage({ silentOnMissingKey: true });
 	}
 });
 
 // ---------- Initial message ----------
-logJson({ message: 'Drop an image or choose a file, then click "Analyze".' });
+logJson({ message: 'Drop or click to choose an image. Analysis runs automatically.' });
