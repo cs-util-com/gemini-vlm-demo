@@ -1,8 +1,8 @@
 # Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Pro)
 
-**Status:** Draft v1 (implementation complete)
+**Status:** v2 with Multi-Image Support
 **Default model:** `gemini-2.5-pro`
-**Scope:** Single-page web demo (no backend) that accepts an image, sends it to Gemini 2.5 with a strict JSON schema, draws bounding boxes/polygons on a canvas, and displays the full structured JSON (including whole-image insights).
+**Scope:** Single-page web demo (no backend) that accepts 1-20 images, processes them in parallel, and provides comprehensive site-wide analysis with session-level reporting and export capabilities.
 
 ---
 
@@ -12,20 +12,25 @@
 
 * Provide a minimal, self-contained **vanilla JS** demo that:
 
-  * Accepts a user-supplied image via drag-and-drop or file picker.
+  * Accepts 1-20 user-supplied images via drag-and-drop or file picker for batch analysis.
   * Calls **Gemini 2.5 Pro** directly via REST with a **strict structured-output schema**.
-  * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) and **global insights** (image-level progress/safety summaries).
-  * Draws **bounding boxes and polygons** on a `<canvas>` overlay and shows the **raw JSON** below the image.
+  * Processes multiple images concurrently (10 parallel requests) for efficient batch analysis.
+  * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) and **global insights** for each image.
+  * Provides **session-level aggregates** across all images with safety issue tracking and detection summaries.
+  * Draws **bounding boxes and polygons** on a `<canvas>` overlay for each image with thumbnail navigation.
+  * Displays interactive reports with session summary and per-image sections.
+  * **Exports session data** as CSV and JSON for external analysis.
 * Keep the schema **generic** so new AEC findings can be expressed without changing the app.
 * Ship with a **BYO API key** flow (prototype only; no server).
 
 ### 1.2 Non-Goals
 
 * No server-side proxy, auth, or key management.
-* No storage of images or keys. No analytics.
+* No storage of images or keys beyond session. No analytics.
 * No integration with BIM, floor plans, WBS, or scheduling tools (future work).
 * No segmentation masks visualization (future work).
 * No mobile camera capture UI (file input only).
+* No localStorage session persistence (sessions are ephemeral).
 
 ---
 
@@ -33,17 +38,23 @@
 
 ### 2.1 Users
 
-* AEC professionals evaluating AI helpers for: site monitoring, safety, facility inventory, and progress estimation.
+* AEC professionals evaluating AI helpers for: site monitoring, safety, facility inventory, and progress estimation across multiple site locations or areas.
 
-### 2.2 Use Cases (supported in one run)
+### 2.2 Use Cases (supported in batch analysis)
 
-* **General object detection** (e.g., ladders, scaffolds, ducts, tools).
-* **Facility asset inventory** (e.g., exit signs, fire extinguishers) with counts.
-* **Safety findings** (PPE compliance, ladder angle, blocked exits, unguarded edges) with severity.
+* **Multi-location site analysis** - Upload 10-20 images from different areas of a construction site for comprehensive safety and progress assessment.
+* **General object detection** (e.g., ladders, scaffolds, ducts, tools) across multiple images.
+* **Facility asset inventory** (e.g., exit signs, fire extinguishers) with aggregated counts across the site.
+* **Safety findings** (PPE compliance, ladder angle, blocked exits, unguarded edges) with severity tracking and site-wide heatmap.
 * **Progress insights**
 
-  * Per-region progress: e.g., drywall or MEP rough-in in a portion of the image.
-  * Whole-image progress: overall phase and percent complete.
+  * Per-region progress: e.g., drywall or MEP rough-in in portions of different images.
+  * Whole-image progress: overall phase and percent complete per location.
+  * **Session-level aggregates**: Total detections, safety issues breakdown, category distributions across all images.
+
+* **Export capabilities**
+  * CSV export: Session summary with per-image statistics for spreadsheet analysis
+  * JSON export: Complete session data including all detections and results
 
 ---
 
@@ -490,8 +501,21 @@ The report is organized into independently collapsible sections:
 
 ## 13) Build & Run
 
+### Single Image Mode
 * No build step. Open `index.html` in a modern browser.
-* Paste API key, choose model (default `gemini-2.5-pro`), drop an image, click **Analyze**.
+* Paste API key, choose model (default `gemini-2.5-pro`), drop a single image.
+* Analysis starts automatically.
+
+### Multi-Image Batch Mode (New in v2)
+* Drop or select up to 20 images at once.
+* Progress bar shows real-time analysis status.
+* Images are processed concurrently (10 at a time).
+* Once complete, view:
+  - **Session Summary**: Aggregated statistics across all images
+  - **Thumbnail Gallery**: Click any thumbnail to view that image's overlays
+  - **Per-Image Reports**: Detailed findings for each image
+  - **Export Options**: Download CSV or JSON of session data
+* **Keyboard Navigation**: Use arrow keys (← →) to navigate between images.
 
 ---
 
@@ -550,3 +574,81 @@ The report is organized into independently collapsible sections:
 5. **Download artifacts:** Add “Download JSON” and “Download annotated PNG” buttons?
 6. **Public demo hosting:** If hosted, should a **tiny proxy** be added immediately to avoid teaching bad key practices?
 
+
+
+---
+
+## 20) Multi-Image Features (v2)
+
+### 20.1 Session-Based Analysis
+
+**Batch Upload**
+* Support for 1-20 images per session
+* Drag-and-drop or file picker for multiple files
+* Automatic validation with user feedback for >20 images
+
+**Concurrent Processing**
+* Hardcoded limit: 10 parallel API requests
+* Optimizes analysis time while respecting API quotas
+* Individual image failures don't block session completion
+
+**Progress Tracking**
+* Real-time progress bar: "Analyzing X of Y images..."
+* Per-image status: Queued → Analyzing → Completed/Error
+* Visual feedback through thumbnail status badges
+
+### 20.2 Session Reporting
+
+**Session Summary**
+* Total images analyzed (completed vs. failed)
+* Total detections across all images
+* Safety issues breakdown by severity (High/Medium/Low)
+* Images with safety issues heatmap
+
+**Per-Image Navigation**
+* Thumbnail gallery with click-to-view
+* Keyboard navigation (arrow keys)
+* Active image highlighting
+* Scroll-to-section in report
+
+**Aggregated Statistics**
+* Detection counts by category across session
+* Detection counts by label across session
+* Per-image safety summaries
+* Image-level detection counts
+
+### 20.3 Export Capabilities
+
+**CSV Export**
+* Per-image statistics table
+* Columns: Image #, File Name, Detections, Safety Issues (High/Med/Low), Status
+* Session summary footer with totals
+* Suitable for spreadsheet analysis and reporting
+
+**JSON Export**
+* Complete session object
+* All image results with full detection data
+* Session aggregates
+* Error information for failed images
+* Machine-readable format for further processing
+
+### 20.4 Technical Implementation
+
+**Modules**
+* `session-manager.js` - Session state management, aggregates calculation, export formatting
+* `session-report-ui.js` - Session summary rendering, heatmap visualization
+* `index.js` - Extended with batch orchestrator, thumbnail gallery, keyboard navigation
+
+**Architecture Benefits**
+* Graceful degradation (partial results on failure)
+* Memory-efficient (lazy bitmap loading)
+* Responsive UI (progress updates during processing)
+* Export-ready data (structured for external analysis)
+
+**Testing**
+* 25 unit tests for session manager (100% function coverage)
+* Session creation, status updates, completion tracking
+* Aggregate calculations with multiple images
+* CSV/JSON export with proper escaping
+
+For detailed specification, see [docs/multi-image-specification.md](docs/multi-image-specification.md)
