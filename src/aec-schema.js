@@ -24,8 +24,7 @@ Attributes:
 - Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
 
 Coordinates:
-- Set image.coordSystem explicitly to "pixel" if your numbers are pixels,
-	or "normalized_0_1000" if you follow Google’s 0..1000 normalization.
+- Set image.coordSystem explicitly to "normalized_0_1000" (Google's 0..1000 normalization).
 Be conservative; reflect uncertainty in confidence. Output ONLY JSON (no prose).
 `.trim();
 
