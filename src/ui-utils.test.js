@@ -550,7 +550,8 @@ describe('transformResponseFormat', () => {
 				{ label: 'assetPngBase64', box_2d: [6, 6, 7, 7], mask: 'mask_asset_png_base64' },
 				{ label: 'assetBytes', box_2d: [7, 7, 8, 8], mask: 'mask_asset_bytes' },
 				{ label: 'unresolvedShort', box_2d: [8, 8, 9, 9], mask: 'short' },
-				{ label: 'invalidObject', box_2d: [9, 9, 10, 10], mask: { foo: 'bar' } }
+				{ label: 'invalidObject', box_2d: [9, 9, 10, 10], mask: { foo: 'bar' } },
+				{ label: 'invalidType', box_2d: [10, 10, 11, 11], mask: true }
 			],
 			mask_assets: {
 				mask_asset_base64: { base64: baseAsset, mimeType: 'image/jpeg' },
@@ -569,7 +570,8 @@ describe('transformResponseFormat', () => {
 			maskAssetPngBase64,
 			maskAssetBytes,
 			maskUnresolved,
-			maskInvalid
+			maskInvalid,
+			maskInvalidType
 		] = result.detections.map(det => det.mask);
 
 		expect(maskDataUrl).toBe(dataUrl);
@@ -581,5 +583,42 @@ describe('transformResponseFormat', () => {
 		expect(maskAssetBytes).toBe(`data:image/webp;base64,${baseBytes}`);
 		expect(maskUnresolved).toBeUndefined();
 		expect(maskInvalid).toBeUndefined();
+		expect(maskInvalidType).toBeUndefined();
+	});
+
+	it('handles malformed mask assets gracefully', () => {
+		const invalidCharMask = '@'.repeat(40);
+		const inlineBase64 = 'F'.repeat(64);
+		const inlineBytes = 'G'.repeat(64);
+		const dataUrlAsset = 'data:image/png;base64,ZXhhbXBsZWRhdGE=';
+		const input = {
+			items: [
+				{ box_2d: [0, 1, 2], mask: invalidCharMask },
+				{ label: 'numberAsset', mask: 'mask_number_asset' },
+				{ label: 'inlineBase64', mask: 'mask_inline_base64' },
+				{ label: 'inlineBytes', mask: 'mask_inline_bytes' },
+				{ label: 'dataUrlAsset', mask: 'mask_data_url_asset' },
+				{ label: 'emptyStringAsset', mask: 'mask_empty_string' }
+			],
+			mask_assets: {
+				mask_number_asset: 42,
+				mask_inline_base64: { inline_data: { base64: inlineBase64, mime_type: 'image/heif' } },
+				mask_inline_bytes: { inlineData: { bytes: inlineBytes, mimeType: 'image/tiff' } },
+				mask_data_url_asset: { data: dataUrlAsset },
+				mask_empty_string: ''
+			}
+		};
+
+		const result = transformResponseFormat(input);
+		const [first, second, third, fourth, fifth, sixth] = result.detections;
+
+		expect(first.label).toBe('unknown');
+		expect(first.bbox).toBeNull();
+		expect(first.mask).toBeUndefined();
+		expect(second.mask).toBeUndefined();
+		expect(third.mask).toBe(`data:image/heif;base64,${inlineBase64}`);
+		expect(fourth.mask).toBe(`data:image/tiff;base64,${inlineBytes}`);
+		expect(fifth.mask).toBe(dataUrlAsset);
+		expect(sixth.mask).toBeUndefined();
 	});
 });
