@@ -402,9 +402,8 @@ export function setupReportInteractions(reportContainer, detections, onHover, on
 		header.dataset.toggleBound = 'true';
 
 		header.addEventListener('click', () => {
-			const section = header.dataset.section;
-			if (!section) return;
-			const content = reportContainer.querySelector(`.report-content[data-section="${section}"]`);
+			const sectionEl = header.closest('.report-section');
+			const content = sectionEl?.querySelector('.report-content');
 			if (!content) return;
 
 			header.classList.toggle('collapsed');
