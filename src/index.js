@@ -546,7 +546,7 @@ async function callGeminiREST({ apiKey, model, file }) {
 
 async function analyzeImageBatch(files) {
 	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+	const model  = modelEl.value.trim() || 'gemini-2.5-flash';
 
 	if (!apiKey) {
 		logJson({ error: 'Missing API key' }, 'Error');
