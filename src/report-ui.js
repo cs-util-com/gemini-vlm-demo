@@ -272,28 +272,43 @@ function renderDetectionCards(detections) {
 		const category = det.category || 'other';
 		const categoryLabel = category.replace(/_/g, ' ');
 
-		let attrsHtml = '';
-		if (Array.isArray(det.attributes) && det.attributes.length > 0) {
-			attrsHtml = '<dl class="detection-card-attrs">';
-			det.attributes.forEach(attr => {
-				const value = attr.valueNum ?? attr.valueStr ?? attr.valueBool ?? '—';
-				const unit = attr.unit ? ` ${attr.unit}` : '';
-				attrsHtml += `<dt>${escapeHtml(attr.name)}:</dt><dd>${value}${unit}</dd><br>`;
-			});
-			attrsHtml += '</dl>';
-		}
+                let attrsHtml = '';
+                if (Array.isArray(det.attributes) && det.attributes.length > 0) {
+                        attrsHtml = '<dl class="detection-card-attrs">';
+                        det.attributes.forEach(attr => {
+                                const value = attr.valueNum ?? attr.valueStr ?? attr.valueBool ?? '—';
+                                const unit = attr.unit ? ` ${attr.unit}` : '';
+                                attrsHtml += `<dt>${escapeHtml(attr.name)}:</dt><dd>${value}${unit}</dd><br>`;
+                        });
+                        attrsHtml += '</dl>';
+                }
 
-		return `
-			<div class="detection-card category-${category}" data-detection-id="${det.id || ''}">
-				<div class="detection-card-header">
-					<div class="detection-card-label">${escapeHtml(det.label)}</div>
-					<div class="detection-card-confidence">${confidence}%</div>
-				</div>
-				<div class="detection-card-category">${escapeHtml(categoryLabel)}</div>
-				${attrsHtml}
-			</div>
-		`;
-	}).join('');
+                const geometryTags = [];
+                if (Array.isArray(det.bbox) || Array.isArray(det.box_2d)) {
+                        geometryTags.push('Box');
+                }
+                if (det.mask) {
+                        geometryTags.push('Mask');
+                }
+                if (Array.isArray(det.points) && det.points.length > 0) {
+                        geometryTags.push(det.points.length === 1 ? 'Point' : `${det.points.length} points`);
+                }
+                const geometryHtml = geometryTags.length > 0
+                        ? `<div class="detection-card-geometry">${geometryTags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>`
+                        : '';
+
+                return `
+                        <div class="detection-card category-${category}" data-detection-id="${det.id || ''}">
+                                <div class="detection-card-header">
+                                        <div class="detection-card-label">${escapeHtml(det.label)}</div>
+                                        <div class="detection-card-confidence">${confidence}%</div>
+                                </div>
+                                <div class="detection-card-category">${escapeHtml(categoryLabel)}</div>
+                                ${geometryHtml}
+                                ${attrsHtml}
+                        </div>
+                `;
+        }).join('');
 
 	return `<div class="detection-grid">${cards}</div>`;
 }

@@ -40,23 +40,43 @@ export function toCanvasBox(
 }
 
 export function toCanvasPolygon(
-	poly,
-	coordSystem,
-	displayScaleX,
-	displayScaleY,
-	imgW,
-	imgH,
-	origin = 'top-left'
+        poly,
+        coordSystem,
+        displayScaleX,
+        displayScaleY,
+        imgW,
+        imgH,
+        origin = 'top-left'
 ) {
-	if (!Array.isArray(poly)) return null;
+        if (!Array.isArray(poly)) return null;
 
-	const scaledPoints = poly
-		.map(point => normalizePoint(point, coordSystem, imgW, imgH))
-		.map(point => orientPoint(point, origin, imgH))
-		.map(point => scalePoint(point, displayScaleX, displayScaleY))
-		.filter(Boolean);
+        const scaledPoints = poly
+                .map(point => normalizePoint(point, coordSystem, imgW, imgH))
+                .map(point => orientPoint(point, origin, imgH))
+                .map(point => scalePoint(point, displayScaleX, displayScaleY))
+                .filter(Boolean);
 
-	return scaledPoints.length >= 3 ? scaledPoints : null;
+        return scaledPoints.length >= 3 ? scaledPoints : null;
+}
+
+export function toCanvasPoint(
+        point,
+        coordSystem,
+        displayScaleX,
+        displayScaleY,
+        imgW,
+        imgH,
+        origin = 'top-left'
+) {
+        if (Array.isArray(point) && point.length >= 2) {
+                point = { y: point[0], x: point[1] };
+        }
+
+        const normalized = normalizePoint(point, coordSystem, imgW, imgH);
+        if (!normalized) return null;
+
+        const oriented = orientPoint(normalized, origin, imgH);
+        return scalePoint(oriented, displayScaleX, displayScaleY);
 }
 
 export function ensureCoordSystem(res, fallback = 'normalized_0_1000') {

@@ -2,10 +2,11 @@
 
 import { AEC_PROMPT, RESPONSE_SCHEMA } from './aec-schema.js';
 import {
-	toCanvasBox,
-	toCanvasPolygon,
-	ensureCoordSystem,
-	ensureCoordOrigin
+        toCanvasBox,
+        toCanvasPolygon,
+        toCanvasPoint,
+        ensureCoordSystem,
+        ensureCoordOrigin
 } from './geometry.js';
 import {
 	colorForCategory,
@@ -60,6 +61,7 @@ let naturalW = 0, naturalH = 0;
 let highlightedDetectionId = null;
 let isAnalyzing = false;
 let pendingApiKeyAnalysis = false;
+const maskBitmapCache = new Map();
 
 // ---------- Helpers ----------
 function logJson(obj, note) {
@@ -67,14 +69,105 @@ function logJson(obj, note) {
 }
 
 function clearReport() {
-	reportWrap.innerHTML = '';
+        reportWrap.innerHTML = '';
+}
+
+function ensureMaskDataUrl(value) {
+        if (typeof value !== 'string') return null;
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+        return trimmed.startsWith('data:') ? trimmed : `data:image/png;base64,${trimmed}`;
+}
+
+function normalizeStructuredResponse(parsed) {
+        const items = Array.isArray(parsed?.items) ? parsed.items.slice(0, 25) : [];
+
+        const detections = items.map((item, index) => {
+                let bbox = null;
+                if (Array.isArray(item?.box_2d)) {
+                        const coords = item.box_2d.slice(0, 4).map(num => Number(num));
+                        if (coords.length === 4 && coords.every(Number.isFinite)) {
+                                bbox = coords;
+                        }
+                }
+
+                const rawPoints = Array.isArray(item?.points) ? item.points : [];
+                const points = rawPoints
+                        .map(pt => (Array.isArray(pt) && pt.length >= 2 ? [Number(pt[0]), Number(pt[1])] : null))
+                        .filter(pt => Array.isArray(pt) && pt.every(Number.isFinite));
+
+                const label = typeof item?.label === 'string' && item.label.trim()
+                        ? item.label.trim()
+                        : `item ${index + 1}`;
+
+                const id = item?.id != null ? String(item.id) : `item_${index + 1}`;
+
+                const mask = ensureMaskDataUrl(item?.mask);
+
+                const confidence = typeof item?.confidence === 'number' && Number.isFinite(item.confidence)
+                        ? item.confidence
+                        : undefined;
+
+                return {
+                        id,
+                        label,
+                        category: 'object',
+                        confidence,
+                        bbox,
+                        mask,
+                        points
+                };
+        });
+
+        const normalized = {
+                image: parsed?.image ? { ...parsed.image } : {},
+                detections,
+                items,
+                global_insights: []
+        };
+
+        if (!normalized.image.coordSystem) {
+                normalized.image.coordSystem = 'normalized_0_1000';
+        }
+
+        return normalized;
+}
+
+function ensureMaskBitmap(detection) {
+        if (!detection?.id || !detection.mask) return;
+        if (maskBitmapCache.has(detection.id)) return;
+
+        const dataUrl = ensureMaskDataUrl(detection.mask);
+        if (!dataUrl) return;
+
+        maskBitmapCache.set(detection.id, 'loading');
+
+        fetch(dataUrl)
+                .then(res => res.blob())
+                .then(blob => createImageBitmap(blob))
+                .then(bitmap => {
+                        maskBitmapCache.set(detection.id, bitmap);
+                        requestAnimationFrame(() => drawOverlays());
+                })
+                .catch(() => {
+                        maskBitmapCache.delete(detection.id);
+                });
+}
+
+function primeDetectionAssets(detections) {
+        if (!Array.isArray(detections)) return;
+        for (const det of detections) {
+                if (det?.mask) {
+                        ensureMaskBitmap(det);
+                }
+        }
 }
 
 function drawOverlays() {
-	if (!currentSession || currentImageIndex >= currentSession.images.length) return;
+        if (!currentSession || currentImageIndex >= currentSession.images.length) return;
 
-	const currentImage = currentSession.images[currentImageIndex];
-	const imageId = currentImage.imageId;
+        const currentImage = currentSession.images[currentImageIndex];
+        const imageId = currentImage.imageId;
 	const bitmap = imageBitmaps[imageId];
 	const result = currentImage.result;
 
@@ -90,51 +183,72 @@ function drawOverlays() {
 	const coordSystem = ensureCoordSystem(result, 'normalized_0_1000');
 	const coordOrigin = ensureCoordOrigin(result, 'top-left');
 
-	for (const d of detections) {
-		const isHighlighted = highlightedDetectionId === d.id;
-		const color = colorForCategory(d.category);
-		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
+        for (const d of detections) {
+                const isHighlighted = highlightedDetectionId === d.id;
+                const color = colorForCategory(d.category);
+                const hasConfidence = typeof d.confidence === 'number';
+                const labelText = d.label ?? 'item';
+                const label = hasConfidence ? `${labelText} (${(d.confidence * 100).toFixed(0)}%)` : labelText;
 
-		// Draw with extra emphasis if highlighted
-		if (isHighlighted) {
-			ctx.save();
-			ctx.shadowColor = color;
-			ctx.shadowBlur = 15;
-		}
+                if (isHighlighted) {
+                        ctx.save();
+                        ctx.shadowColor = color;
+                        ctx.shadowBlur = 15;
+                }
 
-		if (d.bbox) {
-			const b = toCanvasBox(
-				d.bbox,
-				coordSystem,
-				scaleX,
-				scaleY,
-				naturalW,
-				naturalH,
-				coordOrigin,
-				canvas.width,
-				canvas.height
-			);
-			if (b) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawBox(b, label, color);
-			}
-		}
-		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
-			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
-			if (pts) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawPolygon(pts, label, color);
-			}
-		}
+                let canvasBox = null;
+                if (d.bbox) {
+                        canvasBox = toCanvasBox(
+                                d.bbox,
+                                coordSystem,
+                                scaleX,
+                                scaleY,
+                                naturalW,
+                                naturalH,
+                                coordOrigin,
+                                canvas.width,
+                                canvas.height
+                        );
+                        if (canvasBox && d.mask) {
+                                ensureMaskBitmap(d);
+                                const maskBitmap = maskBitmapCache.get(d.id);
+                                if (maskBitmap && maskBitmap !== 'loading') {
+                                        drawMask(maskBitmap, canvasBox, color, isHighlighted);
+                                }
+                        }
+                        if (canvasBox) {
+                                if (isHighlighted) {
+                                        ctx.lineWidth = 4;
+                                }
+                                drawBox(canvasBox, label, color);
+                        }
+                }
 
-		if (isHighlighted) {
-			ctx.restore();
-		}
-	}
+                let canvasPolygon = null;
+                if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
+                        canvasPolygon = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
+                        if (canvasPolygon) {
+                                if (isHighlighted) {
+                                        ctx.lineWidth = 4;
+                                }
+                                drawPolygon(canvasPolygon, label, color);
+                        }
+                }
+
+                if (Array.isArray(d.points) && d.points.length > 0) {
+                        const canvasPoints = d.points
+                                .map(pt => toCanvasPoint(pt, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin))
+                                .filter(Boolean);
+                        if (canvasPoints.length > 0) {
+                                const hasShape = Boolean(canvasBox) || Boolean(canvasPolygon);
+                                drawPoints(canvasPoints, color, label, !hasShape, isHighlighted);
+                        }
+                }
+
+                if (isHighlighted) {
+                        ctx.restore();
+                }
+        }
 }
 
 function getStoredApiKey() {
@@ -284,11 +398,15 @@ async function switchToImage(index) {
 		canvas.height = Math.round(naturalH * scale);
 		ctx.clearRect(0, 0, canvas.width, canvas.height);
 		ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-	}
+        }
 
-	highlightedDetectionId = null;
+        highlightedDetectionId = null;
 
-	drawOverlays();
+        if (img.status === 'completed' && img.result) {
+                primeDetectionAssets(img.result.detections);
+        }
+
+        drawOverlays();
 
 	// Scroll to image section in report
 	const section = document.getElementById(`image-section-${img.imageId}`);
@@ -325,18 +443,51 @@ function drawBox(b, label, color) {
 }
 
 function drawPolygon(points, label, color) {
-	if (!points || points.length < 3) return;
-	ctx.save();
-	ctx.lineWidth = 2;
-	ctx.strokeStyle = color;
-	ctx.beginPath();
-	ctx.moveTo(points[0].x, points[0].y);
-	for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-	ctx.closePath();
-	ctx.stroke();
-	// Label near first vertex
-	drawLabelBox(points[0].x, points[0].y, label);
-	ctx.restore();
+        if (!points || points.length < 3) return;
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        ctx.closePath();
+        ctx.stroke();
+        // Label near first vertex
+        drawLabelBox(points[0].x, points[0].y, label);
+        ctx.restore();
+}
+
+function drawMask(maskBitmap, box, color, isHighlighted) {
+        if (!maskBitmap || !box) return;
+        ctx.save();
+        ctx.translate(box.x, box.y);
+        ctx.imageSmoothingEnabled = false;
+        ctx.globalAlpha = 1;
+        ctx.drawImage(maskBitmap, 0, 0, box.width, box.height);
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = color;
+        ctx.globalAlpha = isHighlighted ? 0.6 : 0.4;
+        ctx.fillRect(0, 0, box.width, box.height);
+        ctx.restore();
+}
+
+function drawPoints(points, color, label, drawLabel, isHighlighted) {
+        if (!points || points.length === 0) return;
+        ctx.save();
+        const radius = isHighlighted ? 7 : 5;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = isHighlighted ? 3 : 2;
+        for (const pt of points) {
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+        }
+        if (drawLabel) {
+                drawLabelBox(points[0].x, points[0].y, label);
+        }
+        ctx.restore();
 }
 
 // colorForCategory is now imported from ui-utils.js
@@ -353,23 +504,28 @@ async function callGeminiREST({ apiKey, model, file }) {
 		{ text: AEC_PROMPT }
 	];
 
-	// Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
-	const snake = {
-		contents: [{ parts }],
-		generationConfig: {
-			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA
-		}
-	};
-	const camel = {
-		contents: [{ parts }],
-		generationConfig: {
-			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA
-		}
-	};
+        // Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
+        const snake = {
+                contents: [{ parts }],
+                generationConfig: {
+                        response_mime_type: "application/json",
+                        response_schema: RESPONSE_SCHEMA,
+                        temperature: 0
+                },
+                thinkingConfig: { thinkingBudget: 0 }
+        };
+        const camel = {
+                contents: [{ parts }],
+                generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: RESPONSE_SCHEMA,
+                        temperature: 0
+                },
+                thinkingConfig: { thinkingBudget: 0 }
+        };
 
-	const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+        const modelName = model.startsWith('models/') ? model.slice('models/'.length) : model;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelName)}:generateContent`;
 	async function post(body) {
 		const r = await fetch(url, {
 			method: 'POST',
@@ -406,8 +562,8 @@ async function callGeminiREST({ apiKey, model, file }) {
 // extractJSONFromResponse is now imported from ui-utils.js
 
 async function analyzeImageBatch(files) {
-	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+        const apiKey = apiKeyEl.value.trim();
+        const model  = modelEl.value.trim() || 'models/gemini-2.5-flash';
 
 	if (!apiKey) {
 		logJson({ error: 'Missing API key' }, 'Error');
@@ -429,7 +585,8 @@ async function analyzeImageBatch(files) {
 	isAnalyzing = true;
 
 	clearReport();
-	imageBitmaps = {};
+        imageBitmaps = {};
+        maskBitmapCache.clear();
 	currentImageIndex = 0;
 
 	// Create session
@@ -459,25 +616,28 @@ async function analyzeImageBatch(files) {
 			updateThumbnailStatus(currentSession.images.indexOf(image));
 
 			// Analyze image
-			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const parsed = extractJSONFromResponse(resp);
+                        const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
+                        const parsed = extractJSONFromResponse(resp);
+                        const normalized = normalizeStructuredResponse(parsed);
 
-			// Load bitmap for this image
-			const bitmap = await createImageBitmap(image.file);
-			imageBitmaps[image.imageId] = bitmap;
+                        // Load bitmap for this image
+                        const bitmap = await createImageBitmap(image.file);
+                        imageBitmaps[image.imageId] = bitmap;
 
-			prepareDetectionData(parsed, bitmap.width, bitmap.height);
-			if (!parsed.image) parsed.image = {};
-			parsed.image.preprocessing = preprocess;
-			image.preprocessing = preprocess;
+                        prepareDetectionData(normalized, bitmap.width, bitmap.height);
+                        if (!normalized.image) normalized.image = {};
+                        normalized.image.preprocessing = preprocess;
+                        image.preprocessing = preprocess;
 
-			const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
-			ensureCoordOrigin(parsed, 'top-left');
-			if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
+                        const coordSystem = ensureCoordSystem(normalized, 'normalized_0_1000');
+                        ensureCoordOrigin(normalized, 'top-left');
+                        if (normalized.image.coordSystem == null) normalized.image.coordSystem = coordSystem;
 
-			// Update status to completed
-			updateImageStatus(currentSession, image.imageId, 'completed', parsed);
-			updateThumbnailStatus(currentSession.images.indexOf(image));
+                        primeDetectionAssets(normalized.detections);
+
+                        // Update status to completed
+                        updateImageStatus(currentSession, image.imageId, 'completed', normalized);
+                        updateThumbnailStatus(currentSession.images.indexOf(image));
 
 			completed++;
 			updateProgress(completed, currentSession.totalImages);

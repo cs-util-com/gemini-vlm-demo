@@ -1,8 +1,9 @@
 import {
-	toCanvasBox,
-	toCanvasPolygon,
-	ensureCoordOrigin,
-	ensureCoordSystem
+        toCanvasBox,
+        toCanvasPolygon,
+        toCanvasPoint,
+        ensureCoordOrigin,
+        ensureCoordSystem
 } from './geometry.js';
 import { clamp } from './math.js';
 
@@ -138,10 +139,21 @@ describe('geometry helpers', () => {
     ]);
   });
 
-	test('ensureCoordOrigin falls back to detections when image metadata missing', () => {
-		const parsed = {
-			image: {},
-			detections: [{ coordOrigin: 'bottom-left' }]
+  test('toCanvasPoint converts normalized [y, x] arrays into canvas coordinates', () => {
+    const point = [250, 750];
+    const result = toCanvasPoint(point, 'normalized_0_1000', 0.5, 0.5, naturalW, naturalH, 'top-left');
+    expect(result).toEqual({ x: 75, y: 12.5 });
+  });
+
+  test('toCanvasPoint returns null for invalid points', () => {
+    expect(toCanvasPoint([NaN, 10], 'normalized_0_1000', 1, 1, naturalW, naturalH, 'top-left')).toBeNull();
+    expect(toCanvasPoint(null, 'normalized_0_1000', 1, 1, naturalW, naturalH, 'top-left')).toBeNull();
+  });
+
+        test('ensureCoordOrigin falls back to detections when image metadata missing', () => {
+                const parsed = {
+                        image: {},
+                        detections: [{ coordOrigin: 'bottom-left' }]
 		};
 		expect(ensureCoordOrigin(parsed, 'top-left')).toBe('bottom-left');
 	});
