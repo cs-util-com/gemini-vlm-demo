@@ -67,7 +67,7 @@ function renderImagesSafetyHeatmap(imagesSafety) {
 	const chips = imagesWithSafety.map(img => {
 		const icon = img.maxSeverity === 'high' ? '🔴' : img.maxSeverity === 'medium' ? '🟡' : '🟢';
 		const imageNum = parseInt(img.imageId.replace('img_', ''), 10);
-		return `<span style="display:inline-block; padding:6px 10px; background:#141420; border:1px solid #2a2a3b; border-radius:6px; margin:4px; font-size:12px;">${icon} Image ${imageNum} (${img.safetyCount})</span>`;
+		return `<span class="safety-image-chip" data-image-id="${img.imageId}" style="display:inline-block; padding:6px 10px; background:#141420; border:1px solid #2a2a3b; border-radius:6px; margin:4px; font-size:12px; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s;">${icon} Image ${imageNum} (${img.safetyCount})</span>`;
 	}).join('');
 
 	return `

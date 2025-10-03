@@ -396,32 +396,41 @@ function escapeHtml(text) {
  * Setup interactive event handlers for the report UI
  */
 export function setupReportInteractions(reportContainer, detections, onHover, onLeave) {
-	// Toggle section collapse
+	// Toggle section collapse (attach once per header)
 	reportContainer.querySelectorAll('.report-header').forEach(header => {
+		if (header.dataset.toggleBound === 'true') return;
+		header.dataset.toggleBound = 'true';
+
 		header.addEventListener('click', () => {
 			const section = header.dataset.section;
+			if (!section) return;
 			const content = reportContainer.querySelector(`.report-content[data-section="${section}"]`);
-			
+			if (!content) return;
+
 			header.classList.toggle('collapsed');
 			content.classList.toggle('hidden');
 		});
 	});
 
-	// Detection card hover interactions
+	// Detection card hover interactions (attach once per card)
 	reportContainer.querySelectorAll('[data-detection-id]').forEach(card => {
+		if (card.dataset.hoverBound === 'true') return;
 		const detectionId = card.dataset.detectionId;
-		const detection = detections.find(d => d.id === detectionId);
+		if (!detectionId) return;
 
-		if (detection) {
-			card.addEventListener('mouseenter', () => {
-				card.classList.add('highlight');
-				onHover(detection);
-			});
+		const detection = detections.find(d => String(d.id) === detectionId);
+		if (!detection) return;
 
-			card.addEventListener('mouseleave', () => {
-				card.classList.remove('highlight');
-				onLeave(detection);
-			});
-		}
+		card.dataset.hoverBound = 'true';
+
+		card.addEventListener('mouseenter', () => {
+			card.classList.add('highlight');
+			onHover(detection);
+		});
+
+		card.addEventListener('mouseleave', () => {
+			card.classList.remove('highlight');
+			onLeave(detection);
+		});
 	});
 }

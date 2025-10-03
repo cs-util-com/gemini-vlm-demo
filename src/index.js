@@ -581,6 +581,20 @@ function renderSessionReport() {
 		}
 	}
 
+	// Enable navigation via safety issue chips
+	reportWrap.querySelectorAll('.safety-image-chip').forEach(chip => {
+		if (chip.dataset.navBound === 'true') return;
+		chip.dataset.navBound = 'true';
+		chip.addEventListener('click', () => {
+			const imageId = chip.dataset.imageId;
+			if (!imageId) return;
+			const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
+			if (targetIndex >= 0) {
+				switchToImage(targetIndex);
+			}
+		});
+	});
+
 	// Setup export buttons
 	const exportCSVBtn = document.getElementById('exportCSV');
 	const exportJSONBtn = document.getElementById('exportJSON');
