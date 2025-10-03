@@ -1,8 +1,22 @@
-# Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Pro)
+# Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Flash)
 
-**Status:** v2 with Multi-Image Support
-**Default model:** `gemini-2.5-pro`
-**Scope:** Single-page web demo (no backend) that accepts 1-20 images, processes them in parallel, and provides comprehensive site-wide analysis with session-level reporting and export capabilities.
+**Status:** v2 with Multi-Image Support + Spatial Understanding Enhancements
+**Default model:** `gemini-2.5-flash` (optimized for spatial understanding)
+**Scope:** Single-page web demo (no backend) that accepts 1-20 images, processes them in parallel, and provides comprehensive site-wide analysis with session-level reporting, export capabilities, and enhanced spatial features (bounding boxes, segmentation masks, points).
+
+---
+
+## 🚀 Recent Updates (Spatial Understanding Enhancement)
+
+**Improved bounding box accuracy and added segmentation mask & point support:**
+- ✅ Switched to `gemini-2.5-flash` with thinking disabled for better spatial understanding
+- ✅ Simplified response schema to avoid "too many states" errors
+- ✅ Single API call returns boxes, masks, and points together
+- ✅ Segmentation masks render as colored overlays
+- ✅ Points render as circular markers
+- ✅ All tests pass with backward compatibility maintained
+
+See [docs/spatial-understanding-improvements.md](docs/spatial-understanding-improvements.md) for details.
 
 ---
 
@@ -13,11 +27,11 @@
 * Provide a minimal, self-contained **vanilla JS** demo that:
 
   * Accepts 1-20 user-supplied images via drag-and-drop or file picker for batch analysis.
-  * Calls **Gemini 2.5 Pro** directly via REST with a **strict structured-output schema**.
+  * Calls **Gemini 2.5 Flash** directly via REST with a **simplified structured-output schema**.
   * Processes multiple images concurrently (10 parallel requests) for efficient batch analysis.
-  * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) and **global insights** for each image.
+  * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) with **bounding boxes, segmentation masks, and points** in a single call.
   * Provides **session-level aggregates** across all images with safety issue tracking and detection summaries.
-  * Draws **bounding boxes and polygons** on a `<canvas>` overlay for each image with thumbnail navigation.
+  * Draws **bounding boxes, segmentation masks, points, and polygons** on a `<canvas>` overlay for each image with thumbnail navigation.
   * Displays interactive reports with session summary and per-image sections.
   * **Exports session data** as CSV and JSON for external analysis.
 * Keep the schema **generic** so new AEC findings can be expressed without changing the app.
@@ -28,7 +42,6 @@
 * No server-side proxy, auth, or key management.
 * No storage of images or keys beyond session. No analytics.
 * No integration with BIM, floor plans, WBS, or scheduling tools (future work).
-* No segmentation masks visualization (future work).
 * No mobile camera capture UI (file input only).
 * No localStorage session persistence (sessions are ephemeral).
 
@@ -536,7 +549,8 @@ The report is organized into independently collapsible sections:
 
 * **Edge proxy** (Cloudflare/Vercel) to protect the API key; same client can call the proxy instead of Google directly.
 * **Files API** integration for large files and reuse across requests.
-* **Segmentation masks** (PNG or RLE) and overlay visualization.
+* ~~**Segmentation masks** (PNG or RLE) and overlay visualization.~~ ✅ **IMPLEMENTED** - Masks now render as colored overlays
+* ~~**Points visualization**~~ ✅ **IMPLEMENTED** - Points render as circular markers
 * **Model choice UI** presets for different tasks (safety vs. inventory vs. progress).
 * **BIM/plan context**: add inputs for room/level IDs, WBS, and compare against planned scope.
 * **Confidence threshold slider** and filters by `category`/`label`.
