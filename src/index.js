@@ -431,11 +431,18 @@ function drawMask(maskDataUrl, boundingBox, rgbColor) {
 		});
 	};
 	
-	// Handle both data URLs and plain base64
-	if (maskDataUrl.startsWith('data:')) {
-		img.src = maskDataUrl;
+	const maskSource = typeof maskDataUrl === 'string' ? maskDataUrl.trim() : '';
+	const isLikelyBase64 = maskSource.length >= 32
+		&& /^[A-Za-z0-9+/=\s]+$/.test(maskSource)
+		&& maskSource.replace(/\s+/g, '').length % 4 === 0;
+
+	// Handle both data URLs, regular URLs, and plain base64 payloads
+	if (maskSource.startsWith('data:')) {
+		img.src = maskSource;
+	} else if (!isLikelyBase64 && maskSource.length > 0) {
+		img.src = maskSource;
 	} else {
-		img.src = `data:image/png;base64,${maskDataUrl}`;
+		img.src = `data:image/png;base64,${maskSource}`;
 	}
 }
 
