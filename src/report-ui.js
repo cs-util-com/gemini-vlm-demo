@@ -32,12 +32,17 @@ export function renderReportUI(data) {
 	const detections = Array.isArray(data.detections) ? data.detections : [];
 	const insights = Array.isArray(data.global_insights) ? data.global_insights : [];
 	const aggregates = calculateAggregates(detections);
+	const preprocessing = data?.image?.preprocessing;
 
 	// Separate safety issues and progress items
 	const safetyIssues = detections.filter(d => d.category === 'safety_issue');
 	const progressItems = detections.filter(d => d.category === 'progress' && d.progress);
 
 	let html = '';
+
+	if (preprocessing) {
+		html += renderSection('preprocessing', '🖼️ Image Preprocessing', renderPreprocessing(preprocessing), false);
+	}
 
 	// Safety Issues Section (if any)
 	if (safetyIssues.length > 0) {
@@ -82,6 +87,101 @@ function renderSection(id, title, content, collapsed = false) {
 			</div>
 		</div>
 	`;
+}
+
+function renderPreprocessing(meta) {
+	const cards = [];
+	const scalePercent = typeof meta.scale === 'number' ? Math.round(meta.scale * 100) : 100;
+	const tileLabel = meta.footprint
+		? `${meta.footprint.totalTiles} tile${meta.footprint.totalTiles === 1 ? '' : 's'} (${meta.footprint.tilesAcross}×${meta.footprint.tilesDown} grid)`
+		: '—';
+	const strategyLabel = describeStrategy(meta.strategy, meta.resized);
+
+	if (meta.sourceWidth && meta.sourceHeight) {
+		cards.push(renderPreprocessMetric('Original resolution', `${meta.sourceWidth}×${meta.sourceHeight}`));
+	}
+
+	if (meta.targetWidth && meta.targetHeight) {
+		const note = meta.resized
+			? `${scalePercent}% scale • ${strategyLabel}`
+			: 'Sent as-is';
+		cards.push(renderPreprocessMetric('Sent to Gemini', `${meta.targetWidth}×${meta.targetHeight}`, note));
+	}
+
+	cards.push(renderPreprocessMetric('Tile footprint', tileLabel, `${meta.tileSize || 768}px reference`));
+
+	if (typeof meta.estimatedTokens === 'number') {
+		cards.push(renderPreprocessMetric('Estimated tokens', meta.estimatedTokens.toLocaleString(), 'Approx. 258 tokens per tile'));
+	}
+
+	if (typeof meta.sourceBytes === 'number') {
+		cards.push(renderPreprocessMetric('Original file size', formatBytes(meta.sourceBytes), meta.mimeType ? `Original ${meta.mimeType}` : undefined));
+	}
+
+	if (typeof meta.targetBytes === 'number') {
+		const note = meta.resized ? 'After resize/compression' : 'Original image bytes';
+		cards.push(renderPreprocessMetric('Payload bytes sent', formatBytes(meta.targetBytes), note));
+	}
+
+	if (meta.compressionRatio != null) {
+		const pct = Math.round(meta.compressionRatio * 100);
+		cards.push(renderPreprocessMetric('Size vs. original', `${pct}%`, pct < 100 ? 'Compressed before upload' : 'No size savings'));
+	}
+
+	let warningsHtml = '';
+	if (Array.isArray(meta.warnings) && meta.warnings.length > 0) {
+		const items = meta.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
+		warningsHtml = `
+			<div style="margin-top:16px; padding:12px 16px; border-radius:8px; border:1px solid #513417; background: #24160b; color:#f8b26a;">
+				<strong style="display:block; margin-bottom:4px;">Optimization tips</strong>
+				<ul style="margin:0; padding-left:20px;">${items}</ul>
+			</div>
+		`;
+	}
+
+	return `
+		<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+			${cards.join('')}
+		</div>
+		${warningsHtml}
+	`;
+}
+
+function renderPreprocessMetric(label, value, note) {
+	return `
+		<div style="padding:12px 14px; background:#111827; border:1px solid #1f2937; border-radius:8px;">
+			<div style="font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:#9aa0b4;">${escapeHtml(label)}</div>
+			<div style="margin-top:6px; font-size:18px; font-weight:600; color:#f9fafb;">${escapeHtml(String(value))}</div>
+			${note ? `<div style="margin-top:4px; font-size:12px; color:#9aa0b4;">${escapeHtml(note)}</div>` : ''}
+		</div>
+	`;
+}
+
+function describeStrategy(strategy, resized) {
+	if (!resized) return 'No resize applied';
+	switch (strategy) {
+		case 'downscale-long-side':
+			return 'Long side capped to reduce tile count';
+		case 'downscale-dual-axis':
+			return 'Both dimensions reduced to fit Gemini tile sweet spot';
+		case 'downscale-short-side':
+			return 'Short side normalized to single-tile target';
+		default:
+			return 'Resized prior to upload';
+	}
+}
+
+function formatBytes(bytes) {
+	if (!Number.isFinite(bytes) || bytes < 0) {
+		return '—';
+	}
+	if (bytes === 0) {
+		return '0 B';
+	}
+	const units = ['B', 'KB', 'MB', 'GB'];
+	const exponent = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+	const value = bytes / (1024 ** exponent);
+	return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
 }
 
 function renderSafetyCards(safetyIssues) {
@@ -296,32 +396,40 @@ function escapeHtml(text) {
  * Setup interactive event handlers for the report UI
  */
 export function setupReportInteractions(reportContainer, detections, onHover, onLeave) {
-	// Toggle section collapse
+	// Toggle section collapse (attach once per header)
 	reportContainer.querySelectorAll('.report-header').forEach(header => {
+		if (header.dataset.toggleBound === 'true') return;
+		header.dataset.toggleBound = 'true';
+
 		header.addEventListener('click', () => {
-			const section = header.dataset.section;
-			const content = reportContainer.querySelector(`.report-content[data-section="${section}"]`);
-			
+			const sectionEl = header.closest('.report-section');
+			const content = sectionEl?.querySelector('.report-content');
+			if (!content) return;
+
 			header.classList.toggle('collapsed');
 			content.classList.toggle('hidden');
 		});
 	});
 
-	// Detection card hover interactions
+	// Detection card hover interactions (attach once per card)
 	reportContainer.querySelectorAll('[data-detection-id]').forEach(card => {
+		if (card.dataset.hoverBound === 'true') return;
 		const detectionId = card.dataset.detectionId;
-		const detection = detections.find(d => d.id === detectionId);
+		if (!detectionId) return;
 
-		if (detection) {
-			card.addEventListener('mouseenter', () => {
-				card.classList.add('highlight');
-				onHover(detection);
-			});
+		const detection = detections.find(d => String(d.id) === detectionId);
+		if (!detection) return;
 
-			card.addEventListener('mouseleave', () => {
-				card.classList.remove('highlight');
-				onLeave(detection);
-			});
-		}
+		card.dataset.hoverBound = 'true';
+
+		card.addEventListener('mouseenter', () => {
+			card.classList.add('highlight');
+			onHover(detection);
+		});
+
+		card.addEventListener('mouseleave', () => {
+			card.classList.remove('highlight');
+			onLeave(detection);
+		});
 	});
 }
