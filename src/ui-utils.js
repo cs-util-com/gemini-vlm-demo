@@ -129,3 +129,49 @@ export function escapeHtml(text) {
 	};
 	return str.replace(/[&<>"']/g, char => map[char]);
 }
+
+/**
+ * Transform new simplified response format (items array) to legacy format (detections/global_insights).
+ * This allows the UI code to work with the simplified schema while maintaining backwards compatibility.
+ * @param {object} parsed - Response with 'items' array
+ * @returns {object} Transformed response with 'detections' and 'global_insights'
+ */
+export function transformResponseFormat(parsed) {
+	if (!parsed || typeof parsed !== 'object') {
+		return parsed;
+	}
+	
+	// If already in new format with 'items', transform it
+	if (Array.isArray(parsed.items)) {
+		const detections = parsed.items.map((item, idx) => {
+			const detection = {
+				id: `det_${idx}`,
+				label: item.label || 'unknown',
+				category: item.category || 'object',
+				confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
+				bbox: Array.isArray(item.box_2d) && item.box_2d.length === 4 ? item.box_2d : null
+			};
+			
+			// Add mask if present
+			if (item.mask) {
+				detection.mask = item.mask;
+			}
+			
+			// Add points if present
+			if (Array.isArray(item.points) && item.points.length > 0) {
+				detection.points = item.points;
+			}
+			
+			return detection;
+		});
+		
+		return {
+			image: parsed.image || { coordSystem: 'normalized_0_1000' },
+			detections,
+			global_insights: []
+		};
+	}
+	
+	// Otherwise return as-is (already in legacy format)
+	return parsed;
+}

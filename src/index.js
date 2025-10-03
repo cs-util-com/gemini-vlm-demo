@@ -14,7 +14,8 @@ import {
 	formatJsonOutput,
 	extractBase64FromDataUrl,
 	prepareDetectionData,
-	escapeHtml
+	escapeHtml,
+	transformResponseFormat
 } from './ui-utils.js';
 import { downscaleImageForGemini } from './image-utils.js';
 import {
@@ -90,7 +91,22 @@ function drawOverlays() {
 	const coordSystem = ensureCoordSystem(result, 'normalized_0_1000');
 	const coordOrigin = ensureCoordOrigin(result, 'top-left');
 
-	for (const d of detections) {
+	// Define color palette for segmentation masks (similar to reference implementation)
+	const segmentationColors = [
+		[230, 25, 75],    // Red
+		[60, 180, 75],    // Green
+		[255, 225, 25],   // Yellow
+		[0, 130, 200],    // Blue
+		[245, 130, 48],   // Orange
+		[145, 30, 180],   // Purple
+		[70, 240, 240],   // Cyan
+		[240, 50, 230],   // Magenta
+		[191, 239, 69],   // Lime
+		[250, 190, 212]   // Pink
+	];
+
+	for (let idx = 0; idx < detections.length; idx++) {
+		const d = detections[idx];
 		const isHighlighted = highlightedDetectionId === d.id;
 		const color = colorForCategory(d.category);
 		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
@@ -102,6 +118,25 @@ function drawOverlays() {
 			ctx.shadowBlur = 15;
 		}
 
+		// Draw segmentation mask first (as background layer)
+		if (d.mask && d.bbox) {
+			const b = toCanvasBox(
+				d.bbox,
+				coordSystem,
+				scaleX,
+				scaleY,
+				naturalW,
+				naturalH,
+				coordOrigin,
+				canvas.width,
+				canvas.height
+			);
+			if (b) {
+				drawMask(d.mask, b, segmentationColors[idx % segmentationColors.length]);
+			}
+		}
+
+		// Draw bounding box
 		if (d.bbox) {
 			const b = toCanvasBox(
 				d.bbox,
@@ -121,6 +156,8 @@ function drawOverlays() {
 				drawBox(b, label, color);
 			}
 		}
+		
+		// Draw polygon
 		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
 			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
 			if (pts) {
@@ -129,6 +166,11 @@ function drawOverlays() {
 				}
 				drawPolygon(pts, label, color);
 			}
+		}
+
+		// Draw points
+		if (Array.isArray(d.points) && d.points.length > 0) {
+			drawPoints(d.points, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, label, color);
 		}
 
 		if (isHighlighted) {
@@ -339,6 +381,100 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
+function drawMask(maskDataUrl, boundingBox, rgbColor) {
+	// maskDataUrl is a base64-encoded PNG (data URL)
+	if (!maskDataUrl || !boundingBox) return;
+	
+	const img = new Image();
+	img.onload = () => {
+		// Create an off-screen canvas to process the mask
+		const tempCanvas = document.createElement('canvas');
+		tempCanvas.width = img.width;
+		tempCanvas.height = img.height;
+		const tempCtx = tempCanvas.getContext('2d');
+		
+		// Draw the mask
+		tempCtx.drawImage(img, 0, 0);
+		
+		// Get pixel data
+		const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
+		const data = imageData.data;
+		
+		// Replace grayscale mask with color + alpha
+		// The mask comes as grayscale where white = opaque, black = transparent
+		for (let i = 0; i < data.length; i += 4) {
+			const alpha = data[i]; // Use red channel as alpha (grayscale)
+			data[i] = rgbColor[0];     // R
+			data[i + 1] = rgbColor[1]; // G
+			data[i + 2] = rgbColor[2]; // B
+			data[i + 3] = alpha;       // A
+		}
+		
+		tempCtx.putImageData(imageData, 0, 0);
+		
+		// Draw the colored mask onto the main canvas with transparency
+		ctx.save();
+		ctx.globalAlpha = 0.5;
+		ctx.drawImage(
+			tempCanvas,
+			boundingBox.x,
+			boundingBox.y,
+			boundingBox.width,
+			boundingBox.height
+		);
+		ctx.restore();
+	};
+	
+	// Handle both data URLs and plain base64
+	if (maskDataUrl.startsWith('data:')) {
+		img.src = maskDataUrl;
+	} else {
+		img.src = `data:image/png;base64,${maskDataUrl}`;
+	}
+}
+
+function drawPoints(points, coordSystem, scaleX, scaleY, imgW, imgH, origin, label, color) {
+	// Points are in [y, x] format normalized 0-1000
+	if (!Array.isArray(points) || points.length === 0) return;
+	
+	ctx.save();
+	
+	for (let i = 0; i < points.length; i++) {
+		const pt = points[i];
+		if (!Array.isArray(pt) || pt.length < 2) continue;
+		
+		// Convert [y, x] normalized coordinates to canvas coordinates
+		let y = pt[0];
+		let x = pt[1];
+		
+		// Normalize from 0-1000 to 0-1
+		if (coordSystem === 'normalized_0_1000') {
+			y = y / 1000;
+			x = x / 1000;
+		}
+		
+		// Convert to canvas coordinates
+		const canvasX = x * imgW * scaleX;
+		const canvasY = y * imgH * scaleY;
+		
+		// Draw point as a circle with border
+		ctx.fillStyle = color;
+		ctx.strokeStyle = '#ffffff';
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.arc(canvasX, canvasY, 6, 0, 2 * Math.PI);
+		ctx.fill();
+		ctx.stroke();
+		
+		// Draw label for first point only
+		if (i === 0 && label) {
+			drawLabelBox(canvasX - 20, canvasY - 20, label);
+		}
+	}
+	
+	ctx.restore();
+}
+
 // colorForCategory is now imported from ui-utils.js
 
 async function callGeminiREST({ apiKey, model, file }) {
@@ -354,18 +490,21 @@ async function callGeminiREST({ apiKey, model, file }) {
 	];
 
 	// Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
+	// For spatial understanding, disable thinking (gemini-2.5-flash recommendation)
 	const snake = {
 		contents: [{ parts }],
 		generationConfig: {
 			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA
+			response_schema: RESPONSE_SCHEMA,
+			thinking_config: { thinking_budget: 0 }
 		}
 	};
 	const camel = {
 		contents: [{ parts }],
 		generationConfig: {
 			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA
+			responseSchema: RESPONSE_SCHEMA,
+			thinkingConfig: { thinkingBudget: 0 }
 		}
 	};
 
@@ -460,7 +599,8 @@ async function analyzeImageBatch(files) {
 
 			// Analyze image
 			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const parsed = extractJSONFromResponse(resp);
+			const rawParsed = extractJSONFromResponse(resp);
+			const parsed = transformResponseFormat(rawParsed);
 
 			// Load bitmap for this image
 			const bitmap = await createImageBitmap(image.file);

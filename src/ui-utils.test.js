@@ -5,7 +5,8 @@ import {
 	formatJsonOutput,
 	extractBase64FromDataUrl,
 	prepareDetectionData,
-	escapeHtml
+	escapeHtml,
+	transformResponseFormat
 } from './ui-utils.js';
 
 describe('colorForCategory', () => {
@@ -330,5 +331,102 @@ describe('escapeHtml', () => {
 	it('leaves safe strings unchanged', () => {
 		const input = 'plain text';
 		expect(escapeHtml(input)).toBe(input);
+	});
+});
+
+describe('transformResponseFormat', () => {
+	it('transforms items array to detections format', () => {
+		const input = {
+			items: [
+				{
+					label: 'ladder',
+					box_2d: [100, 200, 300, 400],
+					category: 'object',
+					confidence: 0.95
+				}
+			]
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result).toHaveProperty('detections');
+		expect(result).toHaveProperty('global_insights');
+		expect(Array.isArray(result.detections)).toBe(true);
+		expect(result.detections.length).toBe(1);
+		expect(result.detections[0]).toMatchObject({
+			id: 'det_0',
+			label: 'ladder',
+			bbox: [100, 200, 300, 400],
+			category: 'object',
+			confidence: 0.95
+		});
+	});
+
+	it('includes mask when present', () => {
+		const input = {
+			items: [
+				{
+					label: 'person',
+					box_2d: [10, 20, 30, 40],
+					mask: 'base64maskdata',
+					confidence: 0.9
+				}
+			]
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result.detections[0]).toHaveProperty('mask', 'base64maskdata');
+	});
+
+	it('includes points when present', () => {
+		const input = {
+			items: [
+				{
+					label: 'marker',
+					box_2d: [50, 60, 70, 80],
+					points: [[100, 200], [150, 250]],
+					confidence: 0.85
+				}
+			]
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result.detections[0]).toHaveProperty('points');
+		expect(result.detections[0].points).toEqual([[100, 200], [150, 250]]);
+	});
+
+	it('sets default values for missing fields', () => {
+		const input = {
+			items: [
+				{
+					label: 'item',
+					box_2d: [1, 2, 3, 4]
+				}
+			]
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result.detections[0].category).toBe('object');
+		expect(result.detections[0].confidence).toBe(0.8);
+	});
+
+	it('returns input unchanged if already in legacy format', () => {
+		const input = {
+			detections: [{ id: '1', label: 'test', category: 'object', confidence: 0.9 }],
+			global_insights: []
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result).toBe(input);
+	});
+
+	it('returns input unchanged for invalid input', () => {
+		expect(transformResponseFormat(null)).toBe(null);
+		expect(transformResponseFormat(undefined)).toBe(undefined);
+		expect(transformResponseFormat('string')).toBe('string');
 	});
 });
