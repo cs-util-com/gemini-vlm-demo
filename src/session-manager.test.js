@@ -244,22 +244,41 @@ describe('session-manager', () => {
 			expect(aggregates.countsByCategory[1].count).toBe(1);
 		});
 
-		it('should determine max severity per image', () => {
-			const session = createSession([{ name: 'img1.jpg' }]);
-			
-			updateImageStatus(session, 'img_001', 'completed', {
-				detections: [
-					{ id: '1', label: 'issue1', category: 'safety_issue', safety: { severity: 'low' } },
-					{ id: '2', label: 'issue2', category: 'safety_issue', safety: { severity: 'high' } },
-					{ id: '3', label: 'issue3', category: 'safety_issue', safety: { severity: 'medium' } }
-				]
-			});
+                it('should determine max severity per image', () => {
+                        const session = createSession([{ name: 'img1.jpg' }]);
 
-			const aggregates = calculateSessionAggregates(session);
+                        updateImageStatus(session, 'img_001', 'completed', {
+                                detections: [
+                                        { id: '1', label: 'issue1', category: 'safety_issue', safety: { severity: 'low' } },
+                                        { id: '2', label: 'issue2', category: 'safety_issue', safety: { severity: 'high' } },
+                                        { id: '3', label: 'issue3', category: 'safety_issue', safety: { severity: 'medium' } }
+                                ]
+                        });
 
-			expect(aggregates.imagesSafety[0].maxSeverity).toBe('high');
-			expect(aggregates.imagesSafety[0].safetyCount).toBe(3);
-		});
+                        const aggregates = calculateSessionAggregates(session);
+
+                        expect(aggregates.imagesSafety[0].maxSeverity).toBe('high');
+                        expect(aggregates.imagesSafety[0].safetyCount).toBe(3);
+                });
+
+                it('should default missing detection data gracefully', () => {
+                        const session = createSession([{ name: 'img1.jpg' }, { name: 'img2.jpg' }]);
+
+                        updateImageStatus(session, 'img_001', 'completed', {
+                                detections: [
+                                        { id: '1', category: 'safety_issue' },
+                                        { id: '2', category: 'object' }
+                                ]
+                        });
+                        updateImageStatus(session, 'img_002', 'completed', {});
+
+                        const aggregates = calculateSessionAggregates(session);
+
+                        expect(aggregates.safetyBySeverity.low).toBeGreaterThanOrEqual(1);
+                        const unknownLabelEntry = aggregates.countsByLabel.find(entry => entry.label === 'unknown');
+                        expect(unknownLabelEntry).toBeDefined();
+                        expect(aggregates.totalDetections).toBeGreaterThanOrEqual(2);
+                });
 	});
 
 	describe('exportSessionCSV', () => {
@@ -329,10 +348,10 @@ describe('session-manager', () => {
 			expect(csv).toContain('2,bad.jpg,0,0,0,0,0,Error: Server down');
 		});
 
-		it('should skip aggregate entries without matching images', () => {
-			const session = createSession([{ name: 'only.jpg' }]);
+                it('should skip aggregate entries without matching images', () => {
+                        const session = createSession([{ name: 'only.jpg' }]);
 
-			updateImageStatus(session, 'img_001', 'completed', { detections: [] });
+                        updateImageStatus(session, 'img_001', 'completed', { detections: [] });
 
 			const aggregates = calculateSessionAggregates(session);
 			session.sessionAggregates = {
@@ -351,10 +370,22 @@ describe('session-manager', () => {
 
 			const csv = exportSessionCSV(session);
 
-			expect(csv).toContain('1,only.jpg,0,0,0,0,0,Completed');
-			expect(csv).not.toContain('ghost.jpg');
-		});
-	});
+                        expect(csv).toContain('1,only.jpg,0,0,0,0,0,Completed');
+                        expect(csv).not.toContain('ghost.jpg');
+                });
+
+                it('should fallback to unknown error message when missing', () => {
+                        const session = createSession([{ name: 'error.jpg' }]);
+
+                        updateImageStatus(session, 'img_001', 'error');
+
+                        session.sessionAggregates = calculateSessionAggregates(session);
+
+                        const csv = exportSessionCSV(session);
+
+                        expect(csv).toContain('Error: Unknown error');
+                });
+        });
 
 	describe('exportSessionJSON', () => {
 		it('should export complete session as JSON', () => {

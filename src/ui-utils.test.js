@@ -35,39 +35,39 @@ describe('colorForCategory', () => {
 
 describe('extractJSONFromResponse', () => {
 	it('extracts JSON from valid Gemini response', () => {
-		const resp = {
-			candidates: [{
-				content: {
-					parts: [{ text: '{"detections": []}' }]
-				}
-			}]
-		};
-		const result = extractJSONFromResponse(resp);
-		expect(result).toEqual({ detections: [] });
+                const resp = {
+                        candidates: [{
+                                content: {
+                                        parts: [{ text: '{"items": []}' }]
+                                }
+                        }]
+                };
+                const result = extractJSONFromResponse(resp);
+                expect(result).toEqual({ items: [] });
 	});
 
 	it('strips markdown json code blocks', () => {
-		const resp = {
-			candidates: [{
-				content: {
-					parts: [{ text: '```json\n{"detections": []}\n```' }]
-				}
-			}]
-		};
-		const result = extractJSONFromResponse(resp);
-		expect(result).toEqual({ detections: [] });
+                const resp = {
+                        candidates: [{
+                                content: {
+                                        parts: [{ text: '```json\n{"items": []}\n```' }]
+                                }
+                        }]
+                };
+                const result = extractJSONFromResponse(resp);
+                expect(result).toEqual({ items: [] });
 	});
 
 	it('handles whitespace around JSON', () => {
-		const resp = {
-			candidates: [{
-				content: {
-					parts: [{ text: '  \n{"detections": []}\n  ' }]
-				}
-			}]
-		};
-		const result = extractJSONFromResponse(resp);
-		expect(result).toEqual({ detections: [] });
+                const resp = {
+                        candidates: [{
+                                content: {
+                                        parts: [{ text: '  \n{"items": []}\n  ' }]
+                                }
+                        }]
+                };
+                const result = extractJSONFromResponse(resp);
+                expect(result).toEqual({ items: [] });
 	});
 
 	it('throws error when no candidates', () => {
@@ -239,37 +239,39 @@ describe('extractBase64FromDataUrl', () => {
 });
 
 describe('prepareDetectionData', () => {
-	it('adds missing image dimensions', () => {
-		const parsed = { detections: [] };
-		const result = prepareDetectionData(parsed, 1920, 1080);
-		expect(result.image.width).toBe(1920);
-		expect(result.image.height).toBe(1080);
-	});
+        it('adds missing image dimensions', () => {
+                const parsed = { items: [] };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.image.width).toBe(1920);
+                expect(result.image.height).toBe(1080);
+        });
 
-	it('preserves existing image dimensions', () => {
-		const parsed = { image: { width: 800, height: 600 }, detections: [] };
-		const result = prepareDetectionData(parsed, 1920, 1080);
-		expect(result.image.width).toBe(800);
-		expect(result.image.height).toBe(600);
-	});
+        it('preserves existing image dimensions', () => {
+                const parsed = { image: { width: 800, height: 600 }, items: [] };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.image.width).toBe(800);
+                expect(result.image.height).toBe(600);
+        });
 
-	it('creates image object if missing', () => {
-		const parsed = { detections: [] };
-		const result = prepareDetectionData(parsed, 1920, 1080);
-		expect(result.image).toBeDefined();
-		expect(typeof result.image).toBe('object');
-	});
+        it('creates image object if missing', () => {
+                const parsed = { items: [] };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.image).toBeDefined();
+                expect(typeof result.image).toBe('object');
+        });
 
-	it('preserves other properties in parsed data', () => {
-		const parsed = { 
-			detections: [{ label: 'test' }], 
-			metadata: { source: 'test' },
-			image: {}
-		};
-		const result = prepareDetectionData(parsed, 1920, 1080);
-		expect(result.detections).toEqual([{ label: 'test' }]);
-		expect(result.metadata).toEqual({ source: 'test' });
-	});
+        it('preserves other properties in parsed data', () => {
+                const parsed = {
+                        items: [{ label: 'test', box_2d: [0, 0, 10, 10] }],
+                        metadata: { source: 'test' },
+                        image: {}
+                };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.detections).toHaveLength(1);
+                expect(result.detections[0].label).toBe('test');
+                expect(result.detections[0].bbox).toEqual([0, 0, 10, 10]);
+                expect(result.metadata).toEqual({ source: 'test' });
+        });
 
 	it('handles null width/height in image object', () => {
 		const parsed = { image: { width: null, height: null } };
@@ -278,12 +280,55 @@ describe('prepareDetectionData', () => {
 		expect(result.image.height).toBe(1080);
 	});
 
-	it('handles undefined width/height in image object', () => {
-		const parsed = { image: {} };
-		const result = prepareDetectionData(parsed, 1920, 1080);
-		expect(result.image.width).toBe(1920);
-		expect(result.image.height).toBe(1080);
-	});
+        it('handles undefined width/height in image object', () => {
+                const parsed = { image: {} };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.image.width).toBe(1920);
+                expect(result.image.height).toBe(1080);
+        });
+
+        it('converts legacy detections into items for compatibility', () => {
+                const parsed = {
+                        detections: [{ id: '1', label: 'legacy', bbox: [0, 0, 100, 200] }]
+                };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.items).toHaveLength(1);
+                expect(result.items[0].label).toBe('legacy');
+                expect(result.items[0].box_2d).toEqual([0, 0, 100, 200]);
+                expect(result.detections[0].bbox).toEqual([0, 0, 100, 200]);
+        });
+
+        it('normalizes point arrays into {x,y} objects', () => {
+                const parsed = {
+                        items: [{ label: 'thing', box_2d: [0, 0, 100, 100], points: [[10, 20], [30, 40]] }]
+                };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.detections[0].points).toEqual([{ x: 20, y: 10 }, { x: 40, y: 30 }]);
+        });
+
+        it('omits masks when the string is blank', () => {
+                const parsed = {
+                        items: [{ label: 'thing', box_2d: [0, 0, 100, 100], mask: '   ' }]
+                };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.detections[0].mask).toBeNull();
+        });
+
+        it('filters out invalid points when normalizing', () => {
+                const parsed = {
+                        items: [{ label: 'thing', box_2d: [0, 0, 100, 100], points: [[10, 20], ['bad'], [30]] }]
+                };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.detections[0].points).toEqual([{ x: 20, y: 10 }]);
+        });
+
+        it('trims non-empty mask strings', () => {
+                const parsed = {
+                        items: [{ label: 'thing', box_2d: [0, 0, 100, 100], mask: '  abc123  ' }]
+                };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result.detections[0].mask).toBe('abc123');
+        });
 
 	it('throws error for invalid parsed data', () => {
 		expect(() => prepareDetectionData(null, 1920, 1080)).toThrow('Invalid parsed data');
@@ -303,12 +348,12 @@ describe('prepareDetectionData', () => {
 		expect(() => prepareDetectionData({}, 1920, Infinity)).toThrow('Invalid naturalHeight');
 	});
 
-	it('mutates the original object', () => {
-		const parsed = { detections: [] };
-		const result = prepareDetectionData(parsed, 1920, 1080);
-		expect(result).toBe(parsed); // Same reference
-		expect(parsed.image.width).toBe(1920);
-	});
+        it('mutates the original object', () => {
+                const parsed = { items: [] };
+                const result = prepareDetectionData(parsed, 1920, 1080);
+                expect(result).toBe(parsed); // Same reference
+                expect(parsed.image.width).toBe(1920);
+        });
 });
 
 describe('escapeHtml', () => {

@@ -2,10 +2,11 @@
 
 import { AEC_PROMPT, RESPONSE_SCHEMA } from './aec-schema.js';
 import {
-	toCanvasBox,
-	toCanvasPolygon,
-	ensureCoordSystem,
-	ensureCoordOrigin
+        toCanvasBox,
+        toCanvasPolygon,
+        ensureCoordSystem,
+        ensureCoordOrigin,
+        toCanvasPoint
 } from './geometry.js';
 import {
 	colorForCategory,
@@ -61,13 +62,109 @@ let highlightedDetectionId = null;
 let isAnalyzing = false;
 let pendingApiKeyAnalysis = false;
 
+const DETECTION_COLORS = [
+        '#E6194B',
+        '#3C89D0',
+        '#3CB44B',
+        '#FFE119',
+        '#911EB4',
+        '#42D4F4',
+        '#F58231',
+        '#F032E6',
+        '#BFEF45',
+        '#469990'
+];
+const MASK_BASE_ALPHA = 0.45;
+
 // ---------- Helpers ----------
 function logJson(obj, note) {
-	jsonOut.textContent = formatJsonOutput(obj, note);
+        jsonOut.textContent = formatJsonOutput(obj, note);
+}
+
+function hexToRgb(hex) {
+        const normalized = hex?.startsWith('#') ? hex.slice(1) : hex;
+        if (!normalized || normalized.length !== 6) return { r: 255, g: 255, b: 255 };
+        const r = parseInt(normalized.slice(0, 2), 16);
+        const g = parseInt(normalized.slice(2, 4), 16);
+        const b = parseInt(normalized.slice(4, 6), 16);
+        return {
+                r: Number.isFinite(r) ? r : 255,
+                g: Number.isFinite(g) ? g : 255,
+                b: Number.isFinite(b) ? b : 255
+        };
+}
+
+function ensureMaskDataUrl(maskBase64) {
+        if (typeof maskBase64 !== 'string') return null;
+        const trimmed = maskBase64.trim();
+        if (!trimmed) return null;
+        return trimmed.startsWith('data:') ? trimmed : `data:image/png;base64,${trimmed}`;
+}
+
+async function createTintedMaskCanvas(maskBase64, color) {
+        const src = ensureMaskDataUrl(maskBase64);
+        if (!src) return null;
+
+        const image = await new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error('Failed to load mask image data'));
+                img.src = src;
+        });
+
+        const canvasEl = document.createElement('canvas');
+        canvasEl.width = image.width;
+        canvasEl.height = image.height;
+        const maskCtx = canvasEl.getContext('2d', { willReadFrequently: true });
+        if (!maskCtx) return null;
+
+        maskCtx.imageSmoothingEnabled = false;
+        maskCtx.drawImage(image, 0, 0);
+        const imageData = maskCtx.getImageData(0, 0, canvasEl.width, canvasEl.height);
+        const data = imageData.data;
+        const { r, g, b } = hexToRgb(color);
+
+        for (let i = 0; i < data.length; i += 4) {
+                const alpha = data[i];
+                data[i] = r;
+                data[i + 1] = g;
+                data[i + 2] = b;
+                data[i + 3] = alpha;
+        }
+
+        maskCtx.putImageData(imageData, 0, 0);
+        return canvasEl;
+}
+
+async function attachVisualAssetsToDetections(detections) {
+        if (!Array.isArray(detections)) return;
+
+        const tasks = detections.map(async (det, index) => {
+                const color = DETECTION_COLORS[index % DETECTION_COLORS.length];
+                det.displayColor = color;
+
+                if (det.mask) {
+                        try {
+                                const tinted = await createTintedMaskCanvas(det.mask, color);
+                                if (tinted) {
+                                        Object.defineProperty(det, 'maskCanvas', {
+                                                value: tinted,
+                                                enumerable: false,
+                                                configurable: false,
+                                                writable: false
+                                        });
+                                }
+                        } catch (err) {
+                                console.warn('Failed to decode segmentation mask', err);
+                        }
+                }
+        });
+
+        await Promise.allSettled(tasks);
 }
 
 function clearReport() {
-	reportWrap.innerHTML = '';
+        reportWrap.innerHTML = '';
 }
 
 function drawOverlays() {
@@ -90,51 +187,69 @@ function drawOverlays() {
 	const coordSystem = ensureCoordSystem(result, 'normalized_0_1000');
 	const coordOrigin = ensureCoordOrigin(result, 'top-left');
 
-	for (const d of detections) {
-		const isHighlighted = highlightedDetectionId === d.id;
-		const color = colorForCategory(d.category);
-		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
+        for (const d of detections) {
+                const isHighlighted = highlightedDetectionId === d.id;
+                const color = d.displayColor || colorForCategory(d.category);
+                const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
 
-		// Draw with extra emphasis if highlighted
-		if (isHighlighted) {
-			ctx.save();
-			ctx.shadowColor = color;
-			ctx.shadowBlur = 15;
-		}
+                const box = d.bbox ? toCanvasBox(
+                        d.bbox,
+                        coordSystem,
+                        scaleX,
+                        scaleY,
+                        naturalW,
+                        naturalH,
+                        coordOrigin,
+                        canvas.width,
+                        canvas.height
+                ) : null;
 
-		if (d.bbox) {
-			const b = toCanvasBox(
-				d.bbox,
-				coordSystem,
-				scaleX,
-				scaleY,
-				naturalW,
-				naturalH,
-				coordOrigin,
-				canvas.width,
-				canvas.height
-			);
-			if (b) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawBox(b, label, color);
-			}
-		}
-		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
-			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
-			if (pts) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawPolygon(pts, label, color);
-			}
-		}
+                if (d.maskCanvas && box) {
+                        drawMask(d.maskCanvas, box, isHighlighted);
+                }
 
-		if (isHighlighted) {
-			ctx.restore();
-		}
-	}
+                if (Array.isArray(d.points) && d.points.length > 0) {
+                        let pointIndex = 0;
+                        for (const pt of d.points) {
+                                const canvasPoint = toCanvasPoint(pt, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
+                                if (!canvasPoint) continue;
+                                const pointLabel = !box && (pointIndex === 0)
+                                        ? (d.points.length > 1 ? `${label} • ${pointIndex + 1}` : label)
+                                        : null;
+                                drawPointMarker(canvasPoint, pointLabel, color, isHighlighted);
+                                pointIndex++;
+                        }
+                }
+
+                if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
+                        const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
+                        if (pts) {
+                                if (isHighlighted) {
+                                        ctx.save();
+                                        ctx.shadowColor = color;
+                                        ctx.shadowBlur = 15;
+                                        ctx.lineWidth = 4;
+                                        drawPolygon(pts, label, color);
+                                        ctx.restore();
+                                } else {
+                                        drawPolygon(pts, label, color);
+                                }
+                        }
+                }
+
+                if (box) {
+                        if (isHighlighted) {
+                                ctx.save();
+                                ctx.shadowColor = color;
+                                ctx.shadowBlur = 15;
+                                ctx.lineWidth = 4;
+                                drawBox(box, label, color);
+                                ctx.restore();
+                        } else {
+                                drawBox(box, label, color);
+                        }
+                }
+        }
 }
 
 function getStoredApiKey() {
@@ -316,27 +431,52 @@ function drawLabelBox(x, y, text) {
 }
 
 function drawBox(b, label, color) {
-	ctx.save();
-	ctx.lineWidth = 2;
-	ctx.strokeStyle = color;
-	ctx.strokeRect(b.x, b.y, b.width, b.height);
-	drawLabelBox(b.x, b.y, label);
-	ctx.restore();
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        ctx.strokeRect(b.x, b.y, b.width, b.height);
+        drawLabelBox(b.x, b.y, label);
+        ctx.restore();
+}
+
+function drawMask(maskCanvas, box, isHighlighted) {
+        if (!maskCanvas || !box) return;
+        ctx.save();
+        ctx.globalAlpha = isHighlighted ? Math.min(1, MASK_BASE_ALPHA + 0.2) : MASK_BASE_ALPHA;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(maskCanvas, box.x, box.y, box.width, box.height);
+        ctx.restore();
 }
 
 function drawPolygon(points, label, color) {
-	if (!points || points.length < 3) return;
-	ctx.save();
-	ctx.lineWidth = 2;
-	ctx.strokeStyle = color;
+        if (!points || points.length < 3) return;
+        ctx.save();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
 	ctx.beginPath();
 	ctx.moveTo(points[0].x, points[0].y);
 	for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
 	ctx.closePath();
 	ctx.stroke();
-	// Label near first vertex
-	drawLabelBox(points[0].x, points[0].y, label);
-	ctx.restore();
+        // Label near first vertex
+        drawLabelBox(points[0].x, points[0].y, label);
+        ctx.restore();
+}
+
+function drawPointMarker(point, label, color, isHighlighted) {
+        if (!point) return;
+        ctx.save();
+        ctx.lineWidth = isHighlighted ? 3 : 2;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, isHighlighted ? 6 : 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (label) {
+                drawLabelBox(point.x + 6, point.y - 6, label);
+        }
+        ctx.restore();
 }
 
 // colorForCategory is now imported from ui-utils.js
@@ -348,28 +488,36 @@ async function callGeminiREST({ apiKey, model, file }) {
 	const mimeType = preprocess.mimeType || blob.type || file.type || 'image/jpeg';
 	preprocess.base64Length = base64.length;
 
-	const parts = [
-		{ inline_data: { mime_type: mimeType, data: base64 } },
-		{ text: AEC_PROMPT }
-	];
+        const parts = [
+                { inline_data: { mime_type: mimeType, data: base64 } },
+                { text: AEC_PROMPT }
+        ];
 
-	// Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
-	const snake = {
-		contents: [{ parts }],
-		generationConfig: {
-			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA
-		}
-	};
-	const camel = {
-		contents: [{ parts }],
-		generationConfig: {
-			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA
-		}
-	};
+        const modelInput = model?.trim() || 'models/gemini-2.5-flash';
+        const modelId = modelInput.startsWith('models/') ? modelInput : `models/${modelInput}`;
+        const modelPath = modelId.replace(/^models\//, '');
 
-	const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+        // Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
+        const snake = {
+                contents: [{ parts }],
+                generationConfig: {
+                        temperature: 0.5,
+                        response_mime_type: "application/json",
+                        response_schema: RESPONSE_SCHEMA,
+                        thinking_config: { thinking_budget: 0 }
+                }
+        };
+        const camel = {
+                contents: [{ parts }],
+                generationConfig: {
+                        temperature: 0.5,
+                        responseMimeType: "application/json",
+                        responseSchema: RESPONSE_SCHEMA,
+                        thinkingConfig: { thinkingBudget: 0 }
+                }
+        };
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelPath)}:generateContent`;
 	async function post(body) {
 		const r = await fetch(url, {
 			method: 'POST',
@@ -407,7 +555,7 @@ async function callGeminiREST({ apiKey, model, file }) {
 
 async function analyzeImageBatch(files) {
 	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+        const model  = modelEl.value.trim() || 'models/gemini-2.5-flash';
 
 	if (!apiKey) {
 		logJson({ error: 'Missing API key' }, 'Error');
@@ -466,17 +614,18 @@ async function analyzeImageBatch(files) {
 			const bitmap = await createImageBitmap(image.file);
 			imageBitmaps[image.imageId] = bitmap;
 
-			prepareDetectionData(parsed, bitmap.width, bitmap.height);
-			if (!parsed.image) parsed.image = {};
-			parsed.image.preprocessing = preprocess;
-			image.preprocessing = preprocess;
+                        const prepared = prepareDetectionData(parsed, bitmap.width, bitmap.height);
+                        await attachVisualAssetsToDetections(prepared.detections);
+                        if (!prepared.image) prepared.image = {};
+                        prepared.image.preprocessing = preprocess;
+                        image.preprocessing = preprocess;
 
-			const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
-			ensureCoordOrigin(parsed, 'top-left');
-			if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
+                        const coordSystem = ensureCoordSystem(prepared, 'normalized_0_1000');
+                        ensureCoordOrigin(prepared, 'top-left');
+                        if (prepared.image.coordSystem == null) prepared.image.coordSystem = coordSystem;
 
-			// Update status to completed
-			updateImageStatus(currentSession, image.imageId, 'completed', parsed);
+                        // Update status to completed
+                        updateImageStatus(currentSession, image.imageId, 'completed', prepared);
 			updateThumbnailStatus(currentSession.images.indexOf(image));
 
 			completed++;

@@ -94,22 +94,69 @@ export function extractBase64FromDataUrl(dataUrl) {
  * @returns {object} Enhanced detection data with guaranteed image dimensions
  */
 export function prepareDetectionData(parsed, naturalWidth, naturalHeight) {
-	if (!parsed || typeof parsed !== 'object') {
-		throw new Error('Invalid parsed data: must be an object');
-	}
-	if (typeof naturalWidth !== 'number' || !Number.isFinite(naturalWidth) || naturalWidth <= 0) {
-		throw new Error('Invalid naturalWidth: must be positive finite number');
-	}
-	if (typeof naturalHeight !== 'number' || !Number.isFinite(naturalHeight) || naturalHeight <= 0) {
-		throw new Error('Invalid naturalHeight: must be positive finite number');
-	}
+        if (!parsed || typeof parsed !== 'object') {
+                throw new Error('Invalid parsed data: must be an object');
+        }
+        if (typeof naturalWidth !== 'number' || !Number.isFinite(naturalWidth) || naturalWidth <= 0) {
+                throw new Error('Invalid naturalWidth: must be positive finite number');
+        }
+        if (typeof naturalHeight !== 'number' || !Number.isFinite(naturalHeight) || naturalHeight <= 0) {
+                throw new Error('Invalid naturalHeight: must be positive finite number');
+        }
 
-	// Fill in image.width/height if missing (helps downstream)
-	if (!parsed.image) parsed.image = {};
-	if (parsed.image.width == null)  parsed.image.width  = naturalWidth;
-	if (parsed.image.height == null) parsed.image.height = naturalHeight;
+        // Ensure image metadata exists for downstream geometry helpers
+        if (!parsed.image) parsed.image = {};
+        if (parsed.image.width == null)  parsed.image.width  = naturalWidth;
+        if (parsed.image.height == null) parsed.image.height = naturalHeight;
+        if (!parsed.image.coordSystem) parsed.image.coordSystem = 'normalized_0_1000';
 
-	return parsed;
+        // Normalize top-level collections
+        const items = Array.isArray(parsed.items)
+                ? parsed.items
+                : Array.isArray(parsed.detections)
+                        ? parsed.detections.map(det => ({
+                                id: det.id,
+                                label: det.label,
+                                box_2d: det.bbox,
+                                mask: det.mask,
+                                points: Array.isArray(det.points)
+                                        ? det.points.map(pt => Array.isArray(pt) ? pt : [pt.y, pt.x])
+                                        : undefined
+                        }))
+                        : [];
+        parsed.items = items.map((item) => ({ ...item }));
+
+        // Derive legacy detection objects so the existing UI continues to work
+        const detections = parsed.items.map((item, index) => {
+                const label = item.label ?? `item_${index + 1}`;
+                const bbox = Array.isArray(item.box_2d) && item.box_2d.length === 4
+                        ? item.box_2d.map(num => Number.isFinite(num) ? num : Number(num))
+                        : null;
+                const points = Array.isArray(item.points)
+                        ? item.points
+                                .filter(point => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite))
+                                .map(([y, x]) => ({ x, y }))
+                        : [];
+
+                return {
+                        id: item.id ?? `det_${index + 1}`,
+                        label,
+                        category: item.category ?? 'object',
+                        confidence: typeof item.confidence === 'number' ? item.confidence : null,
+                        bbox,
+                        box_2d: bbox,
+                        mask: typeof item.mask === 'string' && item.mask.trim() ? item.mask.trim() : null,
+                        points,
+                        attributes: Array.isArray(item.attributes) ? item.attributes : undefined,
+                        safety: item.safety,
+                        progress: item.progress
+                };
+        });
+
+        parsed.detections = detections;
+        if (!Array.isArray(parsed.global_insights)) parsed.global_insights = [];
+
+        return parsed;
 }
 
 /**

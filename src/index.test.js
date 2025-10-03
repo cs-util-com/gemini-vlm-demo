@@ -1,10 +1,12 @@
 import {
-	toCanvasBox,
-	toCanvasPolygon,
-	ensureCoordOrigin,
-	ensureCoordSystem
+        toCanvasBox,
+        toCanvasPolygon,
+        toCanvasPoint,
+        ensureCoordOrigin,
+        ensureCoordSystem
 } from './geometry.js';
 import { clamp } from './math.js';
+import { prepareDetectionData } from './ui-utils.js';
 
 describe('geometry helpers', () => {
 	const naturalW = 200;
@@ -120,23 +122,32 @@ describe('geometry helpers', () => {
     expect(result).toBeNull();
   });
 
-  test('toCanvasPolygon returns null when poly is not an array', () => {
-    expect(toCanvasPolygon(null, 'pixel', 1, 1, naturalW, naturalH, 'top-left')).toBeNull();
-  });
+        test('toCanvasPolygon returns null when poly is not an array', () => {
+                expect(toCanvasPolygon(null, 'pixel', 1, 1, naturalW, naturalH, 'top-left')).toBeNull();
+        });
 
-  test('toCanvasPolygon defaults scale factors when display scales are missing', () => {
-    const polygon = [
-      { x: 0, y: 0 },
-      { x: 0, y: 50 },
-      { x: 50, y: 50 }
-    ];
-    const result = toCanvasPolygon(polygon, 'pixel', undefined, undefined, naturalW, naturalH, 'top-left');
-    expect(result).toEqual([
-      { x: 0, y: 0 },
-      { x: 0, y: 50 },
-      { x: 50, y: 50 }
-    ]);
-  });
+        test('toCanvasPolygon defaults scale factors when display scales are missing', () => {
+                const polygon = [
+                        { x: 0, y: 0 },
+                        { x: 0, y: 50 },
+                        { x: 50, y: 50 }
+                ];
+                const result = toCanvasPolygon(polygon, 'pixel', undefined, undefined, naturalW, naturalH, 'top-left');
+                expect(result).toEqual([
+                        { x: 0, y: 0 },
+                        { x: 0, y: 50 },
+                        { x: 50, y: 50 }
+                ]);
+        });
+
+        test('toCanvasPoint returns null for falsy input', () => {
+                expect(toCanvasPoint(null, 'pixel', 1, 1, naturalW, naturalH, 'top-left')).toBeNull();
+        });
+
+        test('toCanvasPoint maps normalized points to canvas space', () => {
+                const point = toCanvasPoint({ x: 500, y: 500 }, 'normalized_0_1000', 0.5, 0.5, naturalW, naturalH, 'top-left');
+                expect(point).toEqual({ x: 50, y: 25 });
+        });
 
 	test('ensureCoordOrigin falls back to detections when image metadata missing', () => {
 		const parsed = {
@@ -162,43 +173,40 @@ describe('geometry helpers', () => {
 	describe('Integration: Full Gemini response flow', () => {
 		test('Complete flow from Gemini response to canvas coordinates', () => {
 			// Simulate a Gemini API response with the official format
-			const geminiResponse = {
-				image: {
-					width: 1920,
-					height: 1080,
-					coordSystem: 'normalized_0_1000'
-				},
-				detections: [
-					{
-						id: '1',
-						label: 'ladder',
-						category: 'object',
-						confidence: 0.95,
-						// Gemini's [ymin, xmin, ymax, xmax] format, normalized 0-1000
-						// This represents: ymin=20%, xmin=10%, ymax=80%, xmax=50%
-						bbox: [200, 100, 800, 500]
-					}
-				]
-			};
+                        const geminiResponse = {
+                                image: {
+                                        width: 1920,
+                                        height: 1080,
+                                        coordSystem: 'normalized_0_1000'
+                                },
+                                items: [
+                                        {
+                                                id: '1',
+                                                label: 'ladder',
+                                                box_2d: [200, 100, 800, 500]
+                                        }
+                                ]
+                        };
 
-			const imgW = geminiResponse.image.width;
-			const imgH = geminiResponse.image.height;
-			const canvasW = 960; // Half size display
-			const canvasH = 540;
-			const scaleX = canvasW / imgW; // 0.5
-			const scaleY = canvasH / imgH; // 0.5
+                        const prepared = prepareDetectionData({ ...geminiResponse }, geminiResponse.image.width, geminiResponse.image.height);
+                        const imgW = prepared.image.width;
+                        const imgH = prepared.image.height;
+                        const canvasW = 960; // Half size display
+                        const canvasH = 540;
+                        const scaleX = canvasW / imgW; // 0.5
+                        const scaleY = canvasH / imgH; // 0.5
 
-			const coordSystem = ensureCoordSystem(geminiResponse, 'normalized_0_1000');
-			const coordOrigin = ensureCoordOrigin(geminiResponse, 'top-left');
+                        const coordSystem = ensureCoordSystem(prepared, 'normalized_0_1000');
+                        const coordOrigin = ensureCoordOrigin(prepared, 'top-left');
 
-			expect(coordSystem).toBe('normalized_0_1000');
-			expect(coordOrigin).toBe('top-left');
+                        expect(coordSystem).toBe('normalized_0_1000');
+                        expect(coordOrigin).toBe('top-left');
 
-			const detection = geminiResponse.detections[0];
-			const canvasBox = toCanvasBox(
-				detection.bbox,
-				coordSystem,
-				scaleX,
+                        const detection = prepared.detections[0];
+                        const canvasBox = toCanvasBox(
+                                detection.bbox,
+                                coordSystem,
+                                scaleX,
 				scaleY,
 				imgW,
 				imgH,
