@@ -102,6 +102,12 @@ function drawOverlays() {
 			ctx.shadowBlur = 15;
 		}
 
+		// Draw segmentation mask if present
+		if (d.mask) {
+			drawMask(d.mask, d.bbox, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, color);
+		}
+
+		// Draw bounding box
 		if (d.bbox) {
 			const b = toCanvasBox(
 				d.bbox,
@@ -121,6 +127,12 @@ function drawOverlays() {
 				drawBox(b, label, color);
 			}
 		}
+		
+		// Draw points if present
+		if (Array.isArray(d.points) && d.points.length > 0) {
+			drawPoints(d.points, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, color);
+		}
+		
 		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
 			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
 			if (pts) {
@@ -339,7 +351,173 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
+function drawMask(maskData, bbox, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, color) {
+	if (!maskData || !bbox) return;
+	
+	try {
+		// Create a temporary image to load the mask
+		const img = new Image();
+		img.onload = () => {
+			// Get the bounding box position
+			const boxRect = toCanvasBox(bbox, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, canvas.width, canvas.height);
+			if (!boxRect) return;
+			
+			// Create a temporary canvas for the mask
+			const tempCanvas = document.createElement('canvas');
+			tempCanvas.width = img.width;
+			tempCanvas.height = img.height;
+			const tempCtx = tempCanvas.getContext('2d');
+			
+			// Draw mask to temp canvas
+			tempCtx.drawImage(img, 0, 0);
+			
+			// Get pixel data
+			const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
+			const data = imageData.data;
+			
+			// Parse color (e.g., "#3B68FF" or "rgb(59, 104, 255)")
+			let r = 59, g = 104, blue = 255;
+			if (color.startsWith('#')) {
+				r = parseInt(color.substr(1, 2), 16);
+				g = parseInt(color.substr(3, 2), 16);
+				blue = parseInt(color.substr(5, 2), 16);
+			} else if (color.startsWith('rgb')) {
+				const match = color.match(/\d+/g);
+				if (match && match.length >= 3) {
+					r = parseInt(match[0]);
+					g = parseInt(match[1]);
+					blue = parseInt(match[2]);
+				}
+			}
+			
+			// Apply color to mask (alpha from mask grayscale)
+			for (let i = 0; i < data.length; i += 4) {
+				const alpha = data[i]; // Use red channel as alpha
+				data[i] = r;
+				data[i + 1] = g;
+				data[i + 2] = blue;
+				data[i + 3] = alpha;
+			}
+			
+			tempCtx.putImageData(imageData, 0, 0);
+			
+			// Draw the colored mask onto the main canvas
+			ctx.save();
+			ctx.globalAlpha = 0.5;
+			ctx.drawImage(tempCanvas, 0, 0, img.width, img.height, boxRect.x, boxRect.y, boxRect.width, boxRect.height);
+			ctx.restore();
+		};
+		
+		// Handle both data URIs and base64 strings
+		if (maskData.startsWith('data:')) {
+			img.src = maskData;
+		} else {
+			img.src = `data:image/png;base64,${maskData}`;
+		}
+	} catch (err) {
+		console.warn('Failed to draw mask:', err);
+	}
+}
+
+function drawPoints(points, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, color) {
+	if (!points || points.length === 0) return;
+	
+	ctx.save();
+	ctx.fillStyle = color;
+	ctx.strokeStyle = '#ffffff';
+	ctx.lineWidth = 2;
+	
+	for (const point of points) {
+		// Point format is [y, x] normalized to 0-1000
+		if (!Array.isArray(point) || point.length < 2) continue;
+		
+		const [y, x] = point;
+		
+		// Convert from normalized coordinates to canvas pixels
+		let canvasX, canvasY;
+		if (coordSystem === 'normalized_0_1000') {
+			canvasX = (x / 1000) * naturalW * scaleX;
+			canvasY = (y / 1000) * naturalH * scaleY;
+		} else {
+			canvasX = x * scaleX;
+			canvasY = y * scaleY;
+		}
+		
+		// Draw a circle for each point
+		ctx.beginPath();
+		ctx.arc(canvasX, canvasY, 6, 0, 2 * Math.PI);
+		ctx.fill();
+		ctx.stroke();
+	}
+	
+	ctx.restore();
+}
+
 // colorForCategory is now imported from ui-utils.js
+
+function convertNewResponseToOldFormat(newResponse) {
+	// Convert new response format {items: [...]} to old format {detections: [...], global_insights: [...]}
+	if (!newResponse || !newResponse.items || !Array.isArray(newResponse.items)) {
+		return { detections: [], global_insights: [] };
+	}
+
+	const detections = newResponse.items.map((item, index) => {
+		// Convert box_2d [y0, x0, y1, x1] to bbox [ymin, xmin, ymax, xmax]
+		const bbox = item.box_2d || null;
+		
+		// Generate ID if not present
+		const id = item.id || `det_${index}`;
+		
+		// Map category - default to "object" if not specified
+		let category = 'object';
+		if (item.category) {
+			const cat = item.category.toLowerCase();
+			if (['object', 'facility_asset', 'safety_issue', 'progress', 'other'].includes(cat)) {
+				category = cat;
+			}
+		}
+		
+		// Detect safety issues based on keywords or explicit category
+		if (category === 'safety_issue' || item.severity) {
+			category = 'safety_issue';
+		}
+		
+		const detection = {
+			id,
+			label: item.label || 'item',
+			category,
+			confidence: item.confidence || 0.8,
+			bbox
+		};
+		
+		// Add safety info if present
+		if (category === 'safety_issue') {
+			detection.safety = {
+				isViolation: true,
+				severity: item.severity || 'medium',
+				rule: null
+			};
+		}
+		
+		// Store mask and points for later visualization
+		if (item.mask) {
+			detection.mask = item.mask;
+		}
+		if (item.points && Array.isArray(item.points)) {
+			detection.points = item.points;
+		}
+		
+		return detection;
+	});
+	
+	return {
+		detections,
+		global_insights: [],
+		image: {
+			coordSystem: 'normalized_0_1000'
+		}
+	};
+}
 
 async function callGeminiREST({ apiKey, model, file }) {
 	const preprocessResult = await downscaleImageForGemini(file);
@@ -358,14 +536,18 @@ async function callGeminiREST({ apiKey, model, file }) {
 		contents: [{ parts }],
 		generationConfig: {
 			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA
+			response_schema: RESPONSE_SCHEMA,
+			temperature: 0.5,
+			thinking_config: { thinking_budget: 0 }
 		}
 	};
 	const camel = {
 		contents: [{ parts }],
 		generationConfig: {
 			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA
+			responseSchema: RESPONSE_SCHEMA,
+			temperature: 0.5,
+			thinkingConfig: { thinkingBudget: 0 }
 		}
 	};
 
@@ -407,7 +589,7 @@ async function callGeminiREST({ apiKey, model, file }) {
 
 async function analyzeImageBatch(files) {
 	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+	const model  = modelEl.value.trim() || 'gemini-2.5-flash';
 
 	if (!apiKey) {
 		logJson({ error: 'Missing API key' }, 'Error');
@@ -460,7 +642,10 @@ async function analyzeImageBatch(files) {
 
 			// Analyze image
 			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const parsed = extractJSONFromResponse(resp);
+			const rawParsed = extractJSONFromResponse(resp);
+			
+			// Convert new format to old format
+			const parsed = convertNewResponseToOldFormat(rawParsed);
 
 			// Load bitmap for this image
 			const bitmap = await createImageBitmap(image.file);
