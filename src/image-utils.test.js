@@ -35,6 +35,24 @@ describe('computeResizeDimensions', () => {
 		expect(result.width).toBe(1280);
 		expect(result.height).toBe(960);
 	});
+
+	test('returns no-op when input is below minimum short side', () => {
+		const result = computeResizeDimensions(640, 480);
+		expect(result.resized).toBe(false);
+		expect(result.strategy).toBe('no-op-small-input');
+		expect(result.width).toBe(640);
+		expect(result.height).toBe(480);
+	});
+
+	test('throws when width is invalid', () => {
+		expect(() => computeResizeDimensions(0, 600)).toThrow('Invalid width');
+		expect(() => computeResizeDimensions(NaN, 600)).toThrow('Invalid width');
+	});
+
+	test('throws when height is invalid', () => {
+		expect(() => computeResizeDimensions(800, 0)).toThrow('Invalid height');
+		expect(() => computeResizeDimensions(800, Number.POSITIVE_INFINITY)).toThrow('Invalid height');
+	});
 });
 
 describe('downscaleImageForGemini', () => {
@@ -74,6 +92,10 @@ describe('downscaleImageForGemini', () => {
 		}
 		return canvas;
 	}
+
+	test('rejects when provided non-blob input', async () => {
+		await expect(downscaleImageForGemini('not-a-blob')).rejects.toThrow('Invalid file');
+	});
 
 	test('produces resized blob metadata and preserves warnings', async () => {
 		global.createImageBitmap = jest.fn(async () => ({
@@ -172,7 +194,7 @@ describe('downscaleImageForGemini', () => {
 		const result = await downscaleImageForGemini(file);
 
 		expect(result.resized).toBe(false);
-		expect(result.warnings.some(w => /Failed to downscale image/i)).toBe(true);
+		expect(result.warnings.some(w => /Failed to downscale image/i.test(w))).toBe(true);
 	});
 
 	test('uses convertToBlob when available and flags large payload warning', async () => {
@@ -232,7 +254,6 @@ describe('downscaleImageForGemini', () => {
 			}
 		}
 
-		// eslint-disable-next-line no-global-assign
 		global.Image = FakeImage;
 
 		const canvasMock = mockCanvas();
@@ -262,5 +283,20 @@ describe('estimateTileFootprint', () => {
 		expect(footprint.tilesAcross).toBe(1);
 		expect(footprint.tilesDown).toBe(1);
 		expect(footprint.totalTiles).toBe(1);
+	});
+
+	test('throws when width is not a positive finite number', () => {
+		expect(() => estimateTileFootprint(0, 100)).toThrow('Invalid width');
+		expect(() => estimateTileFootprint(Number.NaN, 100)).toThrow('Invalid width');
+	});
+
+	test('throws when height is not a positive finite number', () => {
+		expect(() => estimateTileFootprint(100, -5)).toThrow('Invalid height');
+		expect(() => estimateTileFootprint(100, Number.POSITIVE_INFINITY)).toThrow('Invalid height');
+	});
+
+	test('throws when tile size is not a positive finite number', () => {
+		expect(() => estimateTileFootprint(100, 100, 0)).toThrow('Invalid tileSize');
+		expect(() => estimateTileFootprint(100, 100, Number.NaN)).toThrow('Invalid tileSize');
 	});
 });

@@ -312,6 +312,48 @@ describe('session-manager', () => {
 
 			expect(() => exportSessionCSV(session)).toThrow('Session aggregates not calculated');
 		});
+
+		it('should include error rows for failed images', () => {
+			const session = createSession([
+				{ name: 'good.jpg' },
+				{ name: 'bad.jpg' }
+			]);
+
+			updateImageStatus(session, 'img_001', 'completed', { detections: [] });
+			updateImageStatus(session, 'img_002', 'error', null, new Error('Server down'));
+
+			session.sessionAggregates = calculateSessionAggregates(session);
+
+			const csv = exportSessionCSV(session);
+
+			expect(csv).toContain('2,bad.jpg,0,0,0,0,0,Error: Server down');
+		});
+
+		it('should skip aggregate entries without matching images', () => {
+			const session = createSession([{ name: 'only.jpg' }]);
+
+			updateImageStatus(session, 'img_001', 'completed', { detections: [] });
+
+			const aggregates = calculateSessionAggregates(session);
+			session.sessionAggregates = {
+				...aggregates,
+				imagesSafety: [
+					...aggregates.imagesSafety,
+					{
+						imageId: 'img_999',
+						fileName: 'ghost.jpg',
+						detectionsCount: 0,
+						safetyCount: 0,
+						maxSeverity: 'none'
+					}
+				]
+			};
+
+			const csv = exportSessionCSV(session);
+
+			expect(csv).toContain('1,only.jpg,0,0,0,0,0,Completed');
+			expect(csv).not.toContain('ghost.jpg');
+		});
 	});
 
 	describe('exportSessionJSON', () => {

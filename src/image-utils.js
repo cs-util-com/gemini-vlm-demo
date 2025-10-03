@@ -171,7 +171,7 @@ async function loadImageSource(blob) {
 				}
 			}
 		};
-	} catch (err) {
+	} catch {
 		const { image, revoke } = await loadHtmlImage(blob);
 		return {
 			width: image.naturalWidth,
