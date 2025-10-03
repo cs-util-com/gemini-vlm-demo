@@ -246,21 +246,21 @@ Complete session object with all image results and aggregates
 
 ### Phase 1: Core Multi-Image (This PR)
 - [x] Specification document
-- [ ] Multi-file upload UI
-- [ ] Progress bar component
-- [ ] Session manager module
-- [ ] Batch orchestrator with concurrency
-- [ ] Session-level aggregates
-- [ ] Updated report UI
+- [x] Multi-file upload UI
+- [x] Progress bar component
+- [x] Session manager module
+- [x] Batch orchestrator with concurrency
+- [x] Session-level aggregates
+- [x] Updated report UI
 
 ### Phase 2: Export & Navigation
-- [ ] CSV export functionality
-- [ ] JSON export functionality
-- [ ] Thumbnail gallery
-- [ ] Image navigation (click + keyboard)
+- [x] CSV export functionality
+- [x] JSON export functionality
+- [x] Thumbnail gallery
+- [x] Image navigation (click + keyboard)
 
 ### Phase 3: Polish
-- [ ] Error handling refinements
+- [x] Error handling refinements
 - [ ] Performance optimizations
 - [ ] Enhanced session summary visualizations
-- [ ] Documentation updates
+- [x] Documentation updates
