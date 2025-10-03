@@ -484,4 +484,102 @@ describe('transformResponseFormat', () => {
 		expect(transformResponseFormat(undefined)).toBe(undefined);
 		expect(transformResponseFormat('string')).toBe('string');
 	});
+
+	it('gathers mask assets from multiple sources', () => {
+		const base = 'A'.repeat(64);
+		const input = {
+			items: [
+				{
+					label: 'multi',
+					box_2d: [0, 0, 1, 1],
+					mask: 'mask_from_assets_url'
+				}
+			],
+			maskAssets: { mask_primary: base },
+			mask_assets: { mask_secondary: base },
+			maskResources: { mask_resource: base },
+			mask_resources: { mask_resource_snake: base },
+			maskData: { mask_data: base },
+			mask_data: { mask_data_snake: base },
+			masks: { mask_plain: base },
+			segmentationMasks: { mask_segment: base },
+			segmentation_masks: { mask_segment_snake: base },
+			assets: {
+				maskAssets: { mask_from_assets_url: { url: 'https://cdn.example.com/mask.png' } },
+				mask_assets: { mask_from_assets_inline: { inlineData: { data: base, mimeType: 'image/avif' } } },
+				masks: { mask_from_assets_direct: { base64: base } },
+				segmentationMasks: { mask_from_assets_segmentation: { data: base } },
+				segmentation_masks: { mask_from_assets_snake: base }
+			}
+		};
+
+		const result = transformResponseFormat(input);
+
+		expect(result.detections[0].mask).toBe('https://cdn.example.com/mask.png');
+		expect(Object.keys(result.maskAssets)).toEqual(expect.arrayContaining([
+			'mask_primary',
+			'mask_secondary',
+			'mask_resource',
+			'mask_resource_snake',
+			'mask_data',
+			'mask_data_snake',
+			'mask_plain',
+			'mask_segment',
+			'mask_segment_snake',
+			'mask_from_assets_inline',
+			'mask_from_assets_direct',
+			'mask_from_assets_segmentation',
+			'mask_from_assets_snake'
+		]));
+	});
+
+	it('normalizes diverse mask representations', () => {
+		const baseInline = 'A'.repeat(64);
+		const basePng = 'B'.repeat(64);
+		const baseAsset = 'C'.repeat(64);
+		const basePngBase64 = 'D'.repeat(64);
+		const baseBytes = 'E'.repeat(64);
+		const dataUrl = 'data:image/png;base64,alreadyEncoded==';
+		const input = {
+			items: [
+				{ label: 'dataUrl', box_2d: [1, 1, 2, 2], mask: dataUrl },
+				{ label: 'inlineCamel', box_2d: [2, 2, 3, 3], mask: { inlineData: { data: baseInline, mimeType: 'image/gif' } } },
+				{ label: 'directObject', box_2d: [3, 3, 4, 4], mask: { png: basePng } },
+				{ label: 'url', box_2d: [4, 4, 5, 5], mask: { url: 'https://example.com/mask.svg' } },
+				{ label: 'assetBase64', box_2d: [5, 5, 6, 6], mask: 'mask_asset_base64' },
+				{ label: 'assetPngBase64', box_2d: [6, 6, 7, 7], mask: 'mask_asset_png_base64' },
+				{ label: 'assetBytes', box_2d: [7, 7, 8, 8], mask: 'mask_asset_bytes' },
+				{ label: 'unresolvedShort', box_2d: [8, 8, 9, 9], mask: 'short' },
+				{ label: 'invalidObject', box_2d: [9, 9, 10, 10], mask: { foo: 'bar' } }
+			],
+			mask_assets: {
+				mask_asset_base64: { base64: baseAsset, mimeType: 'image/jpeg' },
+				mask_asset_png_base64: { pngBase64: basePngBase64 },
+				mask_asset_bytes: { bytes: baseBytes, mime_type: 'image/webp' }
+			}
+		};
+
+		const result = transformResponseFormat(input);
+		const [
+			maskDataUrl,
+			maskInlineCamel,
+			maskDirectObject,
+			maskUrl,
+			maskAssetBase64,
+			maskAssetPngBase64,
+			maskAssetBytes,
+			maskUnresolved,
+			maskInvalid
+		] = result.detections.map(det => det.mask);
+
+		expect(maskDataUrl).toBe(dataUrl);
+		expect(maskInlineCamel).toBe(`data:image/gif;base64,${baseInline}`);
+		expect(maskDirectObject).toBe(`data:image/png;base64,${basePng}`);
+		expect(maskUrl).toBe('https://example.com/mask.svg');
+		expect(maskAssetBase64).toBe(`data:image/jpeg;base64,${baseAsset}`);
+		expect(maskAssetPngBase64).toBe(`data:image/png;base64,${basePngBase64}`);
+		expect(maskAssetBytes).toBe(`data:image/webp;base64,${baseBytes}`);
+		expect(maskUnresolved).toBeUndefined();
+		expect(maskInvalid).toBeUndefined();
+	});
 });
