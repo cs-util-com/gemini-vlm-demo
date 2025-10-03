@@ -267,35 +267,49 @@ function renderProgressSection(progressItems, progressInsights) {
 }
 
 function renderDetectionCards(detections) {
-	const cards = detections.map(det => {
-		const confidence = typeof det.confidence === 'number' ? (det.confidence * 100).toFixed(0) : '?';
-		const category = det.category || 'other';
-		const categoryLabel = category.replace(/_/g, ' ');
+        const cards = detections.map(det => {
+                const confidence = typeof det.confidence === 'number' ? (det.confidence * 100).toFixed(0) : '?';
+                const category = det.category || 'other';
+                const categoryLabel = category.replace(/_/g, ' ');
+                const colorSwatch = det.visualColor ? `<span class="detection-color-swatch" style="background:${escapeHtml(det.visualColor)};"></span>` : '';
 
-		let attrsHtml = '';
-		if (Array.isArray(det.attributes) && det.attributes.length > 0) {
-			attrsHtml = '<dl class="detection-card-attrs">';
-			det.attributes.forEach(attr => {
-				const value = attr.valueNum ?? attr.valueStr ?? attr.valueBool ?? '—';
-				const unit = attr.unit ? ` ${attr.unit}` : '';
-				attrsHtml += `<dt>${escapeHtml(attr.name)}:</dt><dd>${value}${unit}</dd><br>`;
-			});
-			attrsHtml += '</dl>';
-		}
+                let attrsHtml = '';
+                if (Array.isArray(det.attributes) && det.attributes.length > 0) {
+                        attrsHtml = '<dl class="detection-card-attrs">';
+                        det.attributes.forEach(attr => {
+                                const value = attr.valueNum ?? attr.valueStr ?? attr.valueBool ?? '—';
+                                const unit = attr.unit ? ` ${attr.unit}` : '';
+                                attrsHtml += `<dt>${escapeHtml(attr.name)}:</dt><dd>${value}${unit}</dd><br>`;
+                        });
+                        attrsHtml += '</dl>';
+                }
 
-		return `
-			<div class="detection-card category-${category}" data-detection-id="${det.id || ''}">
-				<div class="detection-card-header">
-					<div class="detection-card-label">${escapeHtml(det.label)}</div>
-					<div class="detection-card-confidence">${confidence}%</div>
-				</div>
-				<div class="detection-card-category">${escapeHtml(categoryLabel)}</div>
-				${attrsHtml}
-			</div>
-		`;
-	}).join('');
+                const extras = [];
+                if (det.mask) {
+                        extras.push('Mask');
+                }
+                if (Array.isArray(det.points) && det.points.length > 0) {
+                        const label = det.points.length === 1 ? '1 point' : `${det.points.length} points`;
+                        extras.push(label);
+                }
+                const extrasHtml = extras.length > 0
+                        ? `<div class="detection-card-extras">${extras.map(text => `<span class="detection-extra">${escapeHtml(text)}</span>`).join('')}</div>`
+                        : '';
 
-	return `<div class="detection-grid">${cards}</div>`;
+                return `
+                        <div class="detection-card category-${category}" data-detection-id="${det.id || ''}">
+                                <div class="detection-card-header">
+                                        <div class="detection-card-label">${colorSwatch}${escapeHtml(det.label)}</div>
+                                        <div class="detection-card-confidence">${confidence}%</div>
+                                </div>
+                                <div class="detection-card-category">${escapeHtml(categoryLabel)}</div>
+                                ${attrsHtml}
+                                ${extrasHtml}
+                        </div>
+                `;
+        }).join('');
+
+        return `<div class="detection-grid">${cards}</div>`;
 }
 
 function renderInsights(insights) {
