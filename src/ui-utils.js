@@ -35,6 +35,19 @@ export function extractJSONFromResponse(resp) {
 	return JSON.parse(raw);
 }
 
+function assertFiniteNumber(value, name, { allowZero = false } = {}) {
+	const isNumber = typeof value === 'number' && Number.isFinite(value);
+	if (!isNumber) {
+		throw new Error(`Invalid ${name}: must be ${allowZero ? 'non-negative' : 'positive'} finite number`);
+	}
+	if (!allowZero && value <= 0) {
+		throw new Error(`Invalid ${name}: must be positive finite number`);
+	}
+	if (allowZero && value < 0) {
+		throw new Error(`Invalid ${name}: must be non-negative finite number`);
+	}
+}
+
 /**
  * Calculate display scale to fit image within viewport constraints.
  * @param {number} naturalWidth - Original image width
@@ -43,16 +56,10 @@ export function extractJSONFromResponse(resp) {
  * @returns {number} Scale factor (1.0 = no scaling, <1.0 = scale down)
  */
 export function calculateDisplayScale(naturalWidth, viewportWidth, padding = 60) {
-	if (typeof naturalWidth !== 'number' || !Number.isFinite(naturalWidth) || naturalWidth <= 0) {
-		throw new Error('Invalid naturalWidth: must be positive finite number');
-	}
-	if (typeof viewportWidth !== 'number' || !Number.isFinite(viewportWidth) || viewportWidth <= 0) {
-		throw new Error('Invalid viewportWidth: must be positive finite number');
-	}
-	if (typeof padding !== 'number' || !Number.isFinite(padding) || padding < 0) {
-		throw new Error('Invalid padding: must be non-negative finite number');
-	}
-	
+	assertFiniteNumber(naturalWidth, 'naturalWidth');
+	assertFiniteNumber(viewportWidth, 'viewportWidth');
+	assertFiniteNumber(padding, 'padding', { allowZero: true });
+
 	const maxW = Math.min(viewportWidth - padding, naturalWidth);
 	return maxW / naturalWidth;
 }
@@ -97,17 +104,16 @@ export function prepareDetectionData(parsed, naturalWidth, naturalHeight) {
 	if (!parsed || typeof parsed !== 'object') {
 		throw new Error('Invalid parsed data: must be an object');
 	}
-	if (typeof naturalWidth !== 'number' || !Number.isFinite(naturalWidth) || naturalWidth <= 0) {
-		throw new Error('Invalid naturalWidth: must be positive finite number');
-	}
-	if (typeof naturalHeight !== 'number' || !Number.isFinite(naturalHeight) || naturalHeight <= 0) {
-		throw new Error('Invalid naturalHeight: must be positive finite number');
-	}
+	assertFiniteNumber(naturalWidth, 'naturalWidth');
+	assertFiniteNumber(naturalHeight, 'naturalHeight');
 
-	// Fill in image.width/height if missing (helps downstream)
-	if (!parsed.image) parsed.image = {};
-	if (parsed.image.width == null)  parsed.image.width  = naturalWidth;
-	if (parsed.image.height == null) parsed.image.height = naturalHeight;
+	const image = parsed.image ?? (parsed.image = {});
+	if (image.width == null) {
+		image.width = naturalWidth;
+	}
+	if (image.height == null) {
+		image.height = naturalHeight;
+	}
 
 	return parsed;
 }
@@ -136,6 +142,11 @@ function isLikelyBase64String(value) {
 	if (trimmed.length < 32) return false;
 	if (!/^[A-Za-z0-9+/=\s]+$/.test(trimmed)) return false;
 	return trimmed.replace(/\s+/g, '').length % 4 === 0;
+}
+
+function toDataUrl(base64, mime = 'image/png') {
+	if (typeof base64 !== 'string' || base64.length === 0) return null;
+	return base64.startsWith('data:') ? base64 : `data:${mime};base64,${base64}`;
 }
 
 function gatherMaskAssetMap(parsed) {
@@ -171,62 +182,64 @@ function gatherMaskAssetMap(parsed) {
 	return Object.keys(collected).length > 0 ? collected : null;
 }
 
+function normalizeStringAsset(asset, fallbackMime) {
+	if (typeof asset !== 'string' || asset.length === 0) return null;
+	if (asset.startsWith('data:')) return asset;
+	return isLikelyBase64String(asset) ? toDataUrl(asset, fallbackMime) : null;
+}
+
+function normalizeInlineDataAsset(asset, fallbackMime) {
+	const inline = asset.inline_data || asset.inlineData;
+	if (!inline || typeof inline !== 'object') return null;
+	const data = inline.data || inline.base64 || inline.bytes;
+	if (typeof data !== 'string' || data.length === 0) return null;
+	const mime = inline.mime_type || inline.mimeType || fallbackMime;
+	return toDataUrl(data, mime);
+}
+
+function normalizeDirectDataAsset(asset, fallbackMime) {
+	const directKeys = ['data', 'base64', 'bytes', 'png', 'png_base64', 'pngBase64'];
+	for (const key of directKeys) {
+		const value = asset[key];
+		if (typeof value !== 'string' || value.length === 0) continue;
+		if (value.startsWith('data:')) return value;
+		if (isLikelyBase64String(value)) {
+			const mime = asset.mime_type || asset.mimeType || fallbackMime;
+			return toDataUrl(value, mime);
+		}
+	}
+	return null;
+}
+
+function normalizeUrlAsset(asset) {
+	const url = asset.url || asset.uri || asset.href;
+	return typeof url === 'string' && url.length > 0 ? url : null;
+}
+
 function normalizeMaskAssetValue(asset, fallbackMime = 'image/png') {
 	if (!asset) return null;
-
 	if (typeof asset === 'string') {
-		if (asset.startsWith('data:')) return asset;
-		if (isLikelyBase64String(asset)) return `data:${fallbackMime};base64,${asset}`;
-		return null;
+		return normalizeStringAsset(asset, fallbackMime);
 	}
-
 	if (typeof asset !== 'object') return null;
-
-	const inline = asset.inline_data || asset.inlineData;
-	if (inline && typeof inline === 'object') {
-		const mime = inline.mime_type || inline.mimeType || fallbackMime;
-		const data = inline.data || inline.base64 || inline.bytes;
-		if (typeof data === 'string' && data.length > 0) {
-			return `data:${mime};base64,${data}`;
-		}
-	}
-
-	const directData = asset.data || asset.base64 || asset.bytes || asset.png || asset.png_base64 || asset.pngBase64;
-	if (typeof directData === 'string' && directData.length > 0) {
-		if (directData.startsWith('data:')) return directData;
-		if (isLikelyBase64String(directData)) {
-			const mime = asset.mime_type || asset.mimeType || fallbackMime;
-			return `data:${mime};base64,${directData}`;
-		}
-		return null;
-	}
-
-	const url = asset.url || asset.uri || asset.href;
-	if (typeof url === 'string' && url.length > 0) {
-		return url;
-	}
-
-	return null;
+	return normalizeInlineDataAsset(asset, fallbackMime)
+		|| normalizeDirectDataAsset(asset, fallbackMime)
+		|| normalizeUrlAsset(asset);
 }
 
 function resolveMaskValue(maskValue, maskAssets) {
 	if (!maskValue) return null;
-
 	if (typeof maskValue === 'string') {
-		if (maskValue.startsWith('data:')) {
-			return maskValue;
-		}
-		if (isLikelyBase64String(maskValue)) {
-			return normalizeMaskAssetValue(maskValue);
+		const normalized = normalizeStringAsset(maskValue);
+		if (normalized) {
+			return normalized;
 		}
 		const asset = maskAssets?.[maskValue];
 		return normalizeMaskAssetValue(asset);
 	}
-
 	if (typeof maskValue === 'object') {
 		return normalizeMaskAssetValue(maskValue);
 	}
-
 	return null;
 }
 
