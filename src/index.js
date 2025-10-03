@@ -57,6 +57,7 @@ const CONCURRENCY_LIMIT = 10;
 let currentSession = null;
 let currentImageIndex = 0;
 let imageBitmaps = {}; // Store bitmaps by imageId
+let maskCache = {}; // Store processed mask canvases by detection id
 let naturalW = 0, naturalH = 0;
 let highlightedDetectionId = null;
 let isAnalyzing = false;
@@ -69,6 +70,7 @@ function logJson(obj, note) {
 
 function clearReport() {
 	reportWrap.innerHTML = '';
+	maskCache = {}; // Clear mask cache when clearing report
 }
 
 function drawOverlays() {
@@ -119,7 +121,7 @@ function drawOverlays() {
 			if (b) {
 				// Draw mask first if available (behind box)
 				if (d.mask) {
-					drawMask(d.mask, b, color);
+					drawMask(d.mask, b, color, d.id);
 				}
 				
 				if (isHighlighted) {
@@ -353,10 +355,21 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
-function drawMask(mask, bbox, color) {
+function drawMask(mask, bbox, color, detectionId) {
 	if (!mask || !bbox) return;
 	
-	// Create temporary canvas for mask
+	// Check if we have a cached processed mask
+	const cacheKey = `${detectionId}-${color}`;
+	if (maskCache[cacheKey]) {
+		// Draw cached mask
+		ctx.save();
+		ctx.globalAlpha = 0.5;
+		ctx.drawImage(maskCache[cacheKey], bbox.x, bbox.y, bbox.width, bbox.height);
+		ctx.restore();
+		return;
+	}
+	
+	// Create temporary canvas for mask processing
 	const maskCanvas = document.createElement('canvas');
 	const maskCtx = maskCanvas.getContext('2d');
 	
@@ -383,15 +396,20 @@ function drawMask(mask, bbox, color) {
 			data[i] = r;
 			data[i + 1] = g;
 			data[i + 2] = b;
-			data[i + 3] = alpha * 0.5; // 50% opacity
+			data[i + 3] = alpha; // Keep original alpha
 		}
 		
 		maskCtx.putImageData(imageData, 0, 0);
 		
-		// Draw mask on main canvas at bbox position
-		ctx.save();
-		ctx.drawImage(maskCanvas, bbox.x, bbox.y, bbox.width, bbox.height);
-		ctx.restore();
+		// Cache the processed mask
+		maskCache[cacheKey] = maskCanvas;
+		
+		// Redraw to show the mask now that it's loaded
+		drawOverlays();
+	};
+	
+	img.onerror = () => {
+		console.warn('Failed to load mask image for detection', detectionId);
 	};
 	
 	// Handle both data URLs and raw base64
