@@ -230,7 +230,8 @@ export function exportSessionJSON(session) {
 			fileName: img.fileName,
 			status: img.status,
 			result: img.result,
-			error: img.error ? { message: img.error.message } : null
+			error: img.error ? { message: img.error.message } : null,
+			preprocessing: img.preprocessing ?? null
 		})),
 		sessionAggregates: session.sessionAggregates
 	};

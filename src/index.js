@@ -15,6 +15,7 @@ import {
 	extractBase64FromDataUrl,
 	prepareDetectionData
 } from './ui-utils.js';
+import { downscaleImageForGemini } from './image-utils.js';
 import {
 	renderReportUI,
 	setupReportInteractions
@@ -340,9 +341,14 @@ function drawPolygon(points, label, color) {
 // colorForCategory is now imported from ui-utils.js
 
 async function callGeminiREST({ apiKey, model, file }) {
-	const base64 = await toBase64(file);
+	const preprocessResult = await downscaleImageForGemini(file);
+	const { blob, ...preprocess } = preprocessResult;
+	const base64 = await toBase64(blob);
+	const mimeType = preprocess.mimeType || blob.type || file.type || 'image/jpeg';
+	preprocess.base64Length = base64.length;
+
 	const parts = [
-		{ inline_data: { mime_type: file.type || 'image/jpeg', data: base64 } },
+		{ inline_data: { mime_type: mimeType, data: base64 } },
 		{ text: AEC_PROMPT }
 	];
 
@@ -381,13 +387,17 @@ async function callGeminiREST({ apiKey, model, file }) {
 	}
 
 	try {
-		return await post(snake);
+		const data = await post(snake);
+		return { data, preprocess };
 	} catch (e1) {
 		// Retry with camelCase schema fields if the first fails
 		try {
-			return await post(camel);
+			const data = await post(camel);
+			return { data, preprocess };
 		} catch (e2) {
-			throw new Error(`Gemini call failed.\nFirst: ${e1.message}\nThen: ${e2.message}`);
+			const err = new Error(`Gemini call failed.\nFirst: ${e1.message}\nThen: ${e2.message}`);
+			err.preprocess = preprocess;
+			throw err;
 		}
 	}
 }
@@ -448,7 +458,7 @@ async function analyzeImageBatch(files) {
 			updateThumbnailStatus(currentSession.images.indexOf(image));
 
 			// Analyze image
-			const resp = await callGeminiREST({ apiKey, model, file: image.file });
+			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
 			const parsed = extractJSONFromResponse(resp);
 
 			// Load bitmap for this image
@@ -456,6 +466,9 @@ async function analyzeImageBatch(files) {
 			imageBitmaps[image.imageId] = bitmap;
 
 			prepareDetectionData(parsed, bitmap.width, bitmap.height);
+			if (!parsed.image) parsed.image = {};
+			parsed.image.preprocessing = preprocess;
+			image.preprocessing = preprocess;
 
 			const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
 			ensureCoordOrigin(parsed, 'top-left');
@@ -470,6 +483,9 @@ async function analyzeImageBatch(files) {
 
 		} catch (err) {
 			// Update status to error
+			if (err && err.preprocess) {
+				image.preprocessing = err.preprocess;
+			}
 			updateImageStatus(currentSession, image.imageId, 'error', null, err);
 			updateThumbnailStatus(currentSession.images.indexOf(image));
 
