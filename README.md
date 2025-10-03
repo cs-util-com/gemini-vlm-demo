@@ -1,8 +1,8 @@
-# Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Pro)
+# Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Flash)
 
-**Status:** v2 with Multi-Image Support
-**Default model:** `gemini-2.5-pro`
-**Scope:** Single-page web demo (no backend) that accepts 1-20 images, processes them in parallel, and provides comprehensive site-wide analysis with session-level reporting and export capabilities.
+**Status:** v2 with Multi-Image Support + Spatial Understanding (Masks & Points)
+**Default model:** `gemini-2.5-flash` (optimized for spatial understanding tasks)
+**Scope:** Single-page web demo (no backend) that accepts 1-20 images, processes them in parallel, and provides comprehensive site-wide analysis with session-level reporting, segmentation masks, and point detection.
 
 ---
 
@@ -13,14 +13,15 @@
 * Provide a minimal, self-contained **vanilla JS** demo that:
 
   * Accepts 1-20 user-supplied images via drag-and-drop or file picker for batch analysis.
-  * Calls **Gemini 2.5 Pro** directly via REST with a **strict structured-output schema**.
+  * Calls **Gemini 2.5 Flash** directly via REST with a **simplified structured-output schema** optimized for spatial understanding.
+  * Disables "thinking" mode for faster and more accurate spatial detection results.
   * Processes multiple images concurrently (10 parallel requests) for efficient batch analysis.
-  * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) and **global insights** for each image.
-  * Provides **session-level aggregates** across all images with safety issue tracking and detection summaries.
-  * Draws **bounding boxes and polygons** on a `<canvas>` overlay for each image with thumbnail navigation.
+  * Returns **bounding boxes** (`box_2d`), **segmentation masks**, and **key points** in a single API call.
+  * Provides **session-level aggregates** across all images with detection summaries.
+  * Draws **bounding boxes**, **segmentation masks** (with alpha blending), and **points** on a `<canvas>` overlay for each image with thumbnail navigation.
   * Displays interactive reports with session summary and per-image sections.
   * **Exports session data** as CSV and JSON for external analysis.
-* Keep the schema **generic** so new AEC findings can be expressed without changing the app.
+* Keep the schema **simple** to avoid "too many states for serving" errors and improve accuracy.
 * Ship with a **BYO API key** flow (prototype only; no server).
 
 ### 1.2 Non-Goals
@@ -28,7 +29,6 @@
 * No server-side proxy, auth, or key management.
 * No storage of images or keys beyond session. No analytics.
 * No integration with BIM, floor plans, WBS, or scheduling tools (future work).
-* No segmentation masks visualization (future work).
 * No mobile camera capture UI (file input only).
 * No localStorage session persistence (sessions are ephemeral).
 
@@ -128,76 +128,57 @@
 
 ## 5) Data Contract
 
-### 5.1 Unified AEC Structured Output Schema
+### 5.1 Simplified Spatial Understanding Schema
 
 **Type:** OpenAPI-style Schema object (as required by the Gemini REST `response_schema`).
-**Coordinate system supported:**
+**Coordinate system:** `normalized_0_1000` → normalized coordinates [0..1000] (converted to pixels in the renderer).
 
-* `"normalized_0_1000"` → normalized coordinates [0..1000] (converted to pixels in the renderer).
+**Design Philosophy:** Keep the schema minimal to avoid "too many states for serving" errors. Based on [Google's spatial understanding guidance](https://developers.googleblog.com/en/conversational-image-segmentation-gemini-2-5/), we request boxes, masks, and points in a single call with a simple structure.
 
 ```json
 {
   "type": "object",
   "properties": {
-    "image": {
-      "type": "object",
-      "properties": {
-        "width": { "type": "number", "nullable": true },
-        "height": { "type": "number", "nullable": true },
-        "fileName": { "type": "string", "nullable": true },
-        "coordSystem": { "type": "string", "enum": ["normalized_0_1000"], "nullable": true, "description": "Always normalized_0_1000" }
-      },
-      "nullable": true
-    },
-    "detections": {
+    "items": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
           "label": { "type": "string" },
-          "category": { "type": "string", "enum": ["object", "facility_asset", "safety_issue", "progress", "other"] },
-          "confidence": { "type": "number" },
-          "bbox": {
+          "box_2d": {
             "type": "array",
             "items": { "type": "number" },
-            "minItems": 4,
-            "maxItems": 4,
-            "description": "[ymin, xmin, ymax, xmax] normalized 0-1000",
-            "nullable": true
+            "description": "[ymin, xmin, ymax, xmax] normalized 0-1000"
           },
-          "polygon": {
+          "mask": { 
+            "type": "string", 
+            "nullable": true,
+            "description": "Base64-encoded PNG probability map for segmentation"
+          },
+          "points": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
-              "required": ["x", "y"]
+              "type": "array",
+              "items": { "type": "number" }
             },
-            "description": "Array of {x,y} points, each normalized 0-1000",
-            "nullable": true
-          },
-          "safety": {
-            "type": "object",
-            "properties": {
-              "isViolation": { "type": "boolean", "nullable": true },
-              "severity": { "type": "string", "enum": ["low", "medium", "high"], "nullable": true },
-              "rule": { "type": "string", "nullable": true }
-            },
-            "nullable": true
-          },
-          "progress": {
-            "type": "object",
-            "properties": {
-              "phase": { "type": "string", "nullable": true },
-              "percentComplete": { "type": "number", "nullable": true },
-              "notes": { "type": "string", "nullable": true }
-            },
-            "nullable": true
-          },
-          "attributes": {
-            "type": "array",
-            "items": {
-              "type": "object",
+            "nullable": true,
+            "description": "Array of [y, x] coordinate pairs normalized 0-1000"
+          }
+        },
+        "required": ["label", "box_2d"]
+      }
+    }
+  },
+  "required": ["items"]
+}
+```
+
+**Key improvements over complex schemas:**
+- No min/max bounds constraints that can trigger state limits
+- No long enum lists or deeply nested structures
+- Single array of items rather than multiple category-specific arrays
+- Optional `mask` and `points` fields returned in same call as `box_2d`
+- Transforms internally to legacy format for backward compatibility with UI
               "properties": {
                 "name": { "type": "string" },
                 "valueStr": { "type": "string", "nullable": true },
@@ -263,41 +244,30 @@
 }
 ```
 
-**Note:** The `aggregates` object has been removed from the schema. Counts by label and category are now calculated client-side from the detections array to prevent hallucination of statistics.
-
 ### 5.2 Prompt (model instruction)
 
-Short text prompt accompanying the image:
+Simplified prompt for spatial understanding:
 
 ```
-You are an AEC computer-vision assistant.
-Return findings strictly matching the provided response schema across FOUR categories:
-1) General objects (e.g., ladder, scaffold, duct, rebar, crane hook).
-2) Facility assets (e.g., exit sign, fire extinguisher, panel/valve).
-3) Safety issues (e.g., missing PPE, unguarded edge, ladder angle > 75°, blocked exit).
-4) Progress/scene insights (e.g., "drywall phase ~70%", "MEP rough-in present", "finishes started").
+Detect objects in this image and return a JSON object with an "items" array.
+Each item should include:
+- "label": descriptive text label
+- "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized to 0-1000
+- "mask": (optional) base64-encoded PNG probability map for segmentation
+- "points": (optional) array of significant points as [y, x] pairs normalized to 0-1000
 
-Geometry:
-- Use bbox as [ymin, xmin, ymax, xmax] array, normalized 0-1000, top-left origin, when localizable.
-- Use polygon only when a box would be misleading (each point {x,y} normalized 0-1000).
-- For whole-image findings (e.g., overall progress), use no geometry under detections (prefer global_insights).
-
-Safety:
-- For safety items, set category: "safety_issue" and fill safety.{isViolation, severity, rule}.
-
-Progress:
-- For per-region progress, set category: "progress" and fill progress.{phase, percentComplete, notes}.
-- For overall progress, prefer global_insights (no geometry).
-
-Attributes:
-- Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
-
-Coordinates:
-- Set image.coordSystem explicitly to "normalized_0_1000" (Google's 0..1000 normalization).
-Be conservative with confidence. Output ONLY JSON (no prose).
+Limit to 25 items. Return JSON only—no prose, no code fences.
 ```
 
-**Note:** Aggregates (counts by label/category) are calculated **client-side** to prevent LLM hallucination of statistics.
+**Rationale:** This simple, direct prompt avoids schema complexity while requesting all spatial understanding features (boxes, masks, points) in a single call. Based on [Gemini 2.5 spatial understanding examples](https://developers.googleblog.com/en/conversational-image-segmentation-gemini-2-5/).
+
+### 5.3 API Configuration
+
+**Key settings for improved accuracy:**
+- **Model:** `gemini-2.5-flash` (optimized for spatial tasks)
+- **Thinking disabled:** `thinkingConfig: {thinkingBudget: 0}` - Gemini documentation recommends disabling thinking for spatial understanding tasks
+- **Temperature:** Default (not explicitly set, lets model use optimal temperature)
+- **Response format:** `application/json` with minimal schema
 
 ---
 
