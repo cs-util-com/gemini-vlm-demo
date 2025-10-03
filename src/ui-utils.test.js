@@ -5,7 +5,8 @@ import {
 	formatJsonOutput,
 	extractBase64FromDataUrl,
 	prepareDetectionData,
-	escapeHtml
+	escapeHtml,
+	transformSimpleResponse
 } from './ui-utils.js';
 
 describe('colorForCategory', () => {
@@ -330,5 +331,85 @@ describe('escapeHtml', () => {
 	it('leaves safe strings unchanged', () => {
 		const input = 'plain text';
 		expect(escapeHtml(input)).toBe(input);
+	});
+});
+
+describe('transformSimpleResponse', () => {
+	it('transforms simple items format to legacy detections format', () => {
+		const simpleResponse = {
+			items: [
+				{
+					label: 'person',
+					box_2d: [100, 200, 300, 400],
+					mask: 'base64encodeddata',
+					points: [[150, 250], [200, 300]]
+				},
+				{
+					label: 'car',
+					box_2d: [400, 500, 600, 700]
+				}
+			]
+		};
+		
+		const result = transformSimpleResponse(simpleResponse);
+		
+		expect(result.detections).toHaveLength(2);
+		expect(result.global_insights).toEqual([]);
+		
+		// Check first detection
+		expect(result.detections[0].id).toBe('item-0');
+		expect(result.detections[0].label).toBe('person');
+		expect(result.detections[0].category).toBe('object');
+		expect(result.detections[0].confidence).toBe(1.0);
+		expect(result.detections[0].bbox).toEqual([100, 200, 300, 400]);
+		expect(result.detections[0].mask).toBe('base64encodeddata');
+		expect(result.detections[0].points).toEqual([[150, 250], [200, 300]]);
+		
+		// Check second detection (no mask or points)
+		expect(result.detections[1].id).toBe('item-1');
+		expect(result.detections[1].label).toBe('car');
+		expect(result.detections[1].bbox).toEqual([400, 500, 600, 700]);
+		expect(result.detections[1].mask).toBeUndefined();
+		expect(result.detections[1].points).toBeUndefined();
+	});
+
+	it('returns legacy format unchanged', () => {
+		const legacyResponse = {
+			detections: [
+				{
+					id: 'det-1',
+					label: 'test',
+					category: 'object',
+					confidence: 0.95
+				}
+			],
+			global_insights: []
+		};
+		
+		const result = transformSimpleResponse(legacyResponse);
+		expect(result).toBe(legacyResponse);
+	});
+
+	it('handles empty items array', () => {
+		const emptyResponse = { items: [] };
+		const result = transformSimpleResponse(emptyResponse);
+		
+		expect(result.detections).toEqual([]);
+		expect(result.global_insights).toEqual([]);
+	});
+
+	it('handles missing label with default', () => {
+		const response = {
+			items: [{ box_2d: [10, 20, 30, 40] }]
+		};
+		
+		const result = transformSimpleResponse(response);
+		expect(result.detections[0].label).toBe('Unknown');
+	});
+
+	it('throws error for invalid input', () => {
+		expect(() => transformSimpleResponse(null)).toThrow('Invalid response: must be an object');
+		expect(() => transformSimpleResponse(undefined)).toThrow('Invalid response: must be an object');
+		expect(() => transformSimpleResponse('string')).toThrow('Invalid response: must be an object');
 	});
 });
