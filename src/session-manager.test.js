@@ -260,6 +260,32 @@ describe('session-manager', () => {
 			expect(aggregates.imagesSafety[0].maxSeverity).toBe('high');
 			expect(aggregates.imagesSafety[0].safetyCount).toBe(3);
 		});
+
+			it('should fill in defaults when detection metadata is missing', () => {
+				const session = createSession([{ name: 'img1.jpg' }]);
+
+				updateImageStatus(session, 'img_001', 'completed', {
+					detections: [
+						{ id: '1' },
+						{ id: '2', category: 'safety_issue', safety: {} }
+					]
+				});
+
+				const aggregates = calculateSessionAggregates(session);
+
+				expect(aggregates.totalDetections).toBe(2);
+				expect(aggregates.totalSafetyIssues).toBe(1);
+				expect(aggregates.safetyBySeverity.low).toBe(1);
+				const categoryOther = aggregates.countsByCategory.find(item => item.category === 'other');
+				const labelUnknown = aggregates.countsByLabel.find(item => item.label === 'unknown');
+				expect(categoryOther?.count).toBe(1);
+				expect(labelUnknown?.count).toBe(2);
+				expect(aggregates.imagesSafety[0].maxSeverity).toBe('low');
+
+				session.sessionAggregates = aggregates;
+				const csv = exportSessionCSV(session);
+				expect(csv).toContain('1,img1.jpg,2,1,0,0,1,Completed');
+			});
 	});
 
 	describe('exportSessionCSV', () => {
@@ -327,6 +353,30 @@ describe('session-manager', () => {
 			const csv = exportSessionCSV(session);
 
 			expect(csv).toContain('2,bad.jpg,0,0,0,0,0,Error: Server down');
+		});
+
+		it('should render blank CSV cells when file name is missing', () => {
+			const session = createSession([{ name: null }]);
+
+			updateImageStatus(session, 'img_001', 'completed', { detections: [] });
+			session.sessionAggregates = calculateSessionAggregates(session);
+
+			const csv = exportSessionCSV(session);
+			const lines = csv.split('\n');
+
+			expect(lines[1]).toBe('1,,0,0,0,0,0,Completed');
+		});
+
+		it('should quote values containing newline characters', () => {
+			const session = createSession([{ name: 'multi\nline.png' }]);
+
+			updateImageStatus(session, 'img_001', 'completed', { detections: [] });
+			session.sessionAggregates = calculateSessionAggregates(session);
+
+			const csv = exportSessionCSV(session);
+
+			expect(csv).toContain('"multi\nline.png"');
+			expect(csv).toContain('Completed');
 		});
 
 		it('should skip aggregate entries without matching images', () => {

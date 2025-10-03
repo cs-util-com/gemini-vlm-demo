@@ -101,6 +101,84 @@ describe('extractJSONFromResponse', () => {
 		expect(() => extractJSONFromResponse(resp)).toThrow();
 	});
 
+	it('strips truncated mask data so remaining fields can be parsed', () => {
+		const truncated = '{"items":[{"label":"skylight","box_2d":[0,482,453,997],"category":"facility_asset","mask":"\\u003cstart_of_mask\\u003eABC';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: truncated }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					label: 'skylight',
+					box_2d: [0, 482, 453, 997],
+					category: 'facility_asset',
+					mask: null
+				}
+			]
+		});
+	});
+
+	it('recovers from truncated mask asset object payloads', () => {
+		const truncated = '{"items":[{"label":"panel","category":"object","mask":{"inline_data":{"mime_type":"image/png","data":"AAA';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: truncated }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					label: 'panel',
+					category: 'object',
+					mask: null
+				}
+			]
+		});
+	});
+
+	it('appends missing closing brackets when mask was otherwise valid', () => {
+		const missingRootBrace = '{"items":[{"mask":"\\u003cstart_of_mask\\u003eAAAA"}]';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: missingRootBrace }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					mask: null
+				}
+			]
+		});
+	});
+
+	it('still throws when cleanup cannot repair the response', () => {
+		const broken = '{"items":[{"label":"door"}],"note":"mask"';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: broken }]
+				}
+			}]
+		};
+
+		expect(() => extractJSONFromResponse(resp)).toThrow();
+	});
+
 	it('finds text part when multiple parts present', () => {
 		const resp = {
 			candidates: [{

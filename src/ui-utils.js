@@ -32,7 +32,166 @@ export function extractJSONFromResponse(resp) {
 	if (!textPart) throw new Error('No text JSON found in response.');
 	// Some responses may wrap JSON in backticks by mistake; strip if needed
 	const raw = textPart.text.trim().replace(/^```json\s*|\s*```$/g, '');
-	return JSON.parse(raw);
+
+	try {
+		return JSON.parse(raw);
+	} catch (err) {
+		const cleaned = cleanupPartialMaskJson(raw);
+		if (cleaned !== raw) {
+			try {
+				return JSON.parse(cleaned);
+			} catch (secondErr) {
+				throw secondErr;
+			}
+		}
+		throw err;
+	}
+}
+
+function cleanupPartialMaskJson(raw) {
+	if (typeof raw !== 'string' || raw.length === 0) return raw;
+	const maskKeyToken = '"mask"';
+	let result = raw;
+	let searchIndex = 0;
+	let changed = false;
+
+	while (searchIndex < result.length) {
+		const keyIndex = result.indexOf(maskKeyToken, searchIndex);
+		if (keyIndex === -1) break;
+
+		let cursor = keyIndex + maskKeyToken.length;
+		while (cursor < result.length && /\s/.test(result[cursor])) cursor++;
+		if (cursor >= result.length || result[cursor] !== ':') {
+			searchIndex = cursor;
+			continue;
+		}
+		cursor++;
+		while (cursor < result.length && /\s/.test(result[cursor])) cursor++;
+
+		const { start, end, terminated } = findJsonValueRange(result, cursor);
+		if (start >= result.length) break;
+
+		const valueSnippet = result.slice(start, end);
+		const containsMaskSentinel = valueSnippet.includes('start_of_mask');
+		const valueLooksBroken = !terminated;
+		if (containsMaskSentinel || valueLooksBroken) {
+			result = `${result.slice(0, start)}null${result.slice(end)}`;
+			changed = true;
+			searchIndex = start + 4; // length of 'null'
+			continue;
+		}
+
+		searchIndex = end;
+	}
+
+	if (!changed) return raw;
+
+	return autoCloseJson(result);
+}
+
+function findJsonValueRange(source, startIndex) {
+	const len = source.length;
+	let idx = startIndex;
+	while (idx < len && /\s/.test(source[idx])) idx++;
+	const valueStart = idx;
+	if (idx >= len) {
+		return { start: valueStart, end: len, terminated: false };
+	}
+
+	const firstChar = source[idx];
+	if (firstChar === '"') {
+		idx++;
+		let escaped = false;
+		while (idx < len) {
+			const ch = source[idx];
+			if (escaped) {
+				escaped = false;
+			} else if (ch === '\\') {
+				escaped = true;
+			} else if (ch === '"') {
+				idx++;
+				return { start: valueStart, end: idx, terminated: true };
+			}
+			idx++;
+		}
+		return { start: valueStart, end: len, terminated: false };
+	}
+
+	if (firstChar === '{' || firstChar === '[') {
+		const stack = [firstChar === '{' ? '}' : ']'];
+		idx++;
+		let inString = false;
+		let escaped = false;
+		while (idx < len && stack.length > 0) {
+			const ch = source[idx];
+			if (inString) {
+				if (escaped) {
+					escaped = false;
+				} else if (ch === '\\') {
+					escaped = true;
+				} else if (ch === '"') {
+					inString = false;
+				}
+			} else {
+				if (ch === '"') {
+					inString = true;
+				} else if (ch === '{') {
+					stack.push('}');
+				} else if (ch === '[') {
+					stack.push(']');
+				} else if ((ch === '}' || ch === ']') && stack[stack.length - 1] === ch) {
+					stack.pop();
+				}
+			}
+			idx++;
+		}
+		return { start: valueStart, end: idx, terminated: stack.length === 0 };
+	}
+
+	while (idx < len && !/[\s,}\]]/.test(source[idx])) idx++;
+	const terminated = idx < len;
+	return { start: valueStart, end: idx, terminated };
+}
+
+function autoCloseJson(source) {
+	const stack = [];
+	let inString = false;
+	let escaped = false;
+	for (let i = 0; i < source.length; i++) {
+		const ch = source[i];
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (ch === '\\') {
+				escaped = true;
+			} else if (ch === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (ch === '"') {
+			inString = true;
+			continue;
+		}
+		if (ch === '{') {
+			stack.push('}');
+			continue;
+		}
+		if (ch === '[') {
+			stack.push(']');
+			continue;
+		}
+		if ((ch === '}' || ch === ']') && stack.length > 0 && stack[stack.length - 1] === ch) {
+			stack.pop();
+		}
+	}
+
+	if (stack.length === 0) return source;
+	let suffix = '';
+	for (let i = stack.length - 1; i >= 0; i--) {
+		suffix += stack[i];
+	}
+	return source + suffix;
 }
 
 function assertFiniteNumber(value, name, { allowZero = false } = {}) {
