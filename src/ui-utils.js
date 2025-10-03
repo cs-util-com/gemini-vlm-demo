@@ -113,6 +113,57 @@ export function prepareDetectionData(parsed, naturalWidth, naturalHeight) {
 }
 
 /**
+ * Transform new simple response format to legacy format for compatibility.
+ * Converts { items: [{label, box_2d, mask?, points?}] } to 
+ * { detections: [{id, label, category, confidence, bbox, mask?, points?}], global_insights: [] }
+ * @param {object} response - Simple response with items array
+ * @returns {object} Legacy format response
+ */
+export function transformSimpleResponse(response) {
+	if (!response || typeof response !== 'object') {
+		throw new Error('Invalid response: must be an object');
+	}
+
+	// If already in legacy format (has detections), return as-is
+	if (response.detections) {
+		return response;
+	}
+
+	// Transform items to detections
+	const items = response.items || [];
+	const detections = items.map((item, idx) => {
+		const detection = {
+			id: `item-${idx}`,
+			label: item.label || 'Unknown',
+			category: 'object',
+			confidence: 1.0
+		};
+
+		// Handle box_2d (convert to bbox for legacy format)
+		if (item.box_2d && Array.isArray(item.box_2d) && item.box_2d.length === 4) {
+			detection.bbox = item.box_2d;
+		}
+
+		// Pass through mask if present
+		if (item.mask) {
+			detection.mask = item.mask;
+		}
+
+		// Pass through points if present
+		if (item.points && Array.isArray(item.points)) {
+			detection.points = item.points;
+		}
+
+		return detection;
+	});
+
+	return {
+		detections,
+		global_insights: []
+	};
+}
+
+/**
  * Safely escape HTML special characters.
  * @param {string} text - Raw text content to escape
  * @returns {string} Escaped HTML string
@@ -129,3 +180,4 @@ export function escapeHtml(text) {
 	};
 	return str.replace(/[&<>"']/g, char => map[char]);
 }
+

@@ -14,7 +14,8 @@ import {
 	formatJsonOutput,
 	extractBase64FromDataUrl,
 	prepareDetectionData,
-	escapeHtml
+	escapeHtml,
+	transformSimpleResponse
 } from './ui-utils.js';
 import { downscaleImageForGemini } from './image-utils.js';
 import {
@@ -102,6 +103,7 @@ function drawOverlays() {
 			ctx.shadowBlur = 15;
 		}
 
+		// Draw bounding box
 		if (d.bbox) {
 			const b = toCanvasBox(
 				d.bbox,
@@ -115,12 +117,19 @@ function drawOverlays() {
 				canvas.height
 			);
 			if (b) {
+				// Draw mask first if available (behind box)
+				if (d.mask) {
+					drawMask(d.mask, b, color);
+				}
+				
 				if (isHighlighted) {
 					ctx.lineWidth = 4;
 				}
 				drawBox(b, label, color);
 			}
 		}
+		
+		// Draw polygon
 		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
 			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
 			if (pts) {
@@ -129,6 +138,11 @@ function drawOverlays() {
 				}
 				drawPolygon(pts, label, color);
 			}
+		}
+		
+		// Draw points
+		if (Array.isArray(d.points) && d.points.length > 0) {
+			drawPoints(d.points, label, color);
 		}
 
 		if (isHighlighted) {
@@ -339,6 +353,92 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
+function drawMask(mask, bbox, color) {
+	if (!mask || !bbox) return;
+	
+	// Create temporary canvas for mask
+	const maskCanvas = document.createElement('canvas');
+	const maskCtx = maskCanvas.getContext('2d');
+	
+	// Create image from base64 mask data
+	const img = new Image();
+	img.onload = () => {
+		maskCanvas.width = img.width;
+		maskCanvas.height = img.height;
+		maskCtx.imageSmoothingEnabled = false;
+		maskCtx.drawImage(img, 0, 0);
+		
+		// Get pixel data and colorize
+		const imageData = maskCtx.getImageData(0, 0, img.width, img.height);
+		const data = imageData.data;
+		
+		// Parse color (e.g., '#ff5b5b' to RGB)
+		const r = parseInt(color.slice(1, 3), 16);
+		const g = parseInt(color.slice(3, 5), 16);
+		const b = parseInt(color.slice(5, 7), 16);
+		
+		// Apply color with alpha from mask
+		for (let i = 0; i < data.length; i += 4) {
+			const alpha = data[i]; // Use red channel as alpha
+			data[i] = r;
+			data[i + 1] = g;
+			data[i + 2] = b;
+			data[i + 3] = alpha * 0.5; // 50% opacity
+		}
+		
+		maskCtx.putImageData(imageData, 0, 0);
+		
+		// Draw mask on main canvas at bbox position
+		ctx.save();
+		ctx.drawImage(maskCanvas, bbox.x, bbox.y, bbox.width, bbox.height);
+		ctx.restore();
+	};
+	
+	// Handle both data URLs and raw base64
+	if (mask.startsWith('data:')) {
+		img.src = mask;
+	} else {
+		img.src = `data:image/png;base64,${mask}`;
+	}
+}
+
+function drawPoints(points, label, color) {
+	if (!points || points.length === 0) return;
+	
+	ctx.save();
+	
+	// Draw each point
+	for (const point of points) {
+		if (!point || point.length !== 2) continue;
+		
+		const [y, x] = point;
+		// Convert from normalized 0-1000 to canvas coordinates
+		const canvasX = (x / 1000) * canvas.width;
+		const canvasY = (y / 1000) * canvas.height;
+		
+		// Draw point circle
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(canvasX, canvasY, 6, 0, 2 * Math.PI);
+		ctx.fill();
+		
+		// Draw border
+		ctx.strokeStyle = '#ffffff';
+		ctx.lineWidth = 2;
+		ctx.stroke();
+	}
+	
+	// Draw label near first point if available
+	if (points.length > 0 && points[0].length === 2) {
+		const [y, x] = points[0];
+		const canvasX = (x / 1000) * canvas.width;
+		const canvasY = (y / 1000) * canvas.height;
+		drawLabelBox(canvasX, canvasY - 20, label);
+	}
+	
+	ctx.restore();
+}
+
 // colorForCategory is now imported from ui-utils.js
 
 async function callGeminiREST({ apiKey, model, file }) {
@@ -358,14 +458,16 @@ async function callGeminiREST({ apiKey, model, file }) {
 		contents: [{ parts }],
 		generationConfig: {
 			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA
+			response_schema: RESPONSE_SCHEMA,
+			thinking_config: { thinking_budget: 0 }
 		}
 	};
 	const camel = {
 		contents: [{ parts }],
 		generationConfig: {
 			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA
+			responseSchema: RESPONSE_SCHEMA,
+			thinkingConfig: { thinkingBudget: 0 }
 		}
 	};
 
@@ -407,7 +509,7 @@ async function callGeminiREST({ apiKey, model, file }) {
 
 async function analyzeImageBatch(files) {
 	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+	const model  = modelEl.value.trim() || 'gemini-2.5-flash';
 
 	if (!apiKey) {
 		logJson({ error: 'Missing API key' }, 'Error');
@@ -460,7 +562,10 @@ async function analyzeImageBatch(files) {
 
 			// Analyze image
 			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const parsed = extractJSONFromResponse(resp);
+			let parsed = extractJSONFromResponse(resp);
+			
+			// Transform new simple format to legacy format for compatibility
+			parsed = transformSimpleResponse(parsed);
 
 			// Load bitmap for this image
 			const bitmap = await createImageBitmap(image.file);
