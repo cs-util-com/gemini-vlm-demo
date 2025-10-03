@@ -111,3 +111,21 @@ export function prepareDetectionData(parsed, naturalWidth, naturalHeight) {
 
 	return parsed;
 }
+
+/**
+ * Safely escape HTML special characters.
+ * @param {string} text - Raw text content to escape
+ * @returns {string} Escaped HTML string
+ */
+export function escapeHtml(text) {
+	if (text == null) return '';
+	const str = String(text);
+	const map = {
+		'&': '&amp;',
+		'<': '&lt;',
+		'>': '&gt;',
+		'"': '&quot;',
+		"'": '&#39;'
+	};
+	return str.replace(/[&<>"']/g, char => map[char]);
+}

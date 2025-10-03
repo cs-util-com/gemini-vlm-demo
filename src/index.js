@@ -13,7 +13,8 @@ import {
 	calculateDisplayScale,
 	formatJsonOutput,
 	extractBase64FromDataUrl,
-	prepareDetectionData
+	prepareDetectionData,
+	escapeHtml
 } from './ui-utils.js';
 import { downscaleImageForGemini } from './image-utils.js';
 import {
@@ -624,12 +625,6 @@ function downloadFile(content, fileName, mimeType) {
 	a.click();
 	document.body.removeChild(a);
 	URL.revokeObjectURL(url);
-}
-
-function escapeHtml(text) {
-	const div = document.createElement('div');
-	div.textContent = text;
-	return div.innerHTML;
 }
 
 async function handleFileSelection(files) {

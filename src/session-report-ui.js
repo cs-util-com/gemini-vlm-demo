@@ -1,5 +1,7 @@
 /* istanbul ignore file */
 
+import { escapeHtml } from './ui-utils.js';
+
 /**
  * Render session-level summary report
  */
@@ -87,10 +89,4 @@ export function renderImageSectionHeader(imageId, fileName, imageNumber) {
 			<span>🖼️ Image ${imageNumber}: ${escapeHtml(fileName)}</span>
 		</div>
 	`;
-}
-
-function escapeHtml(text) {
-	const div = document.createElement('div');
-	div.textContent = text;
-	return div.innerHTML;
 }

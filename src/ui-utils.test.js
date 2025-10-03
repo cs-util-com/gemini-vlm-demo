@@ -4,7 +4,8 @@ import {
 	calculateDisplayScale,
 	formatJsonOutput,
 	extractBase64FromDataUrl,
-	prepareDetectionData
+	prepareDetectionData,
+	escapeHtml
 } from './ui-utils.js';
 
 describe('colorForCategory', () => {
@@ -307,5 +308,27 @@ describe('prepareDetectionData', () => {
 		const result = prepareDetectionData(parsed, 1920, 1080);
 		expect(result).toBe(parsed); // Same reference
 		expect(parsed.image.width).toBe(1920);
+	});
+});
+
+describe('escapeHtml', () => {
+	it('escapes basic HTML special characters', () => {
+		const input = `<div>&<>&"'</div>`;
+		expect(escapeHtml(input)).toBe('&lt;div&gt;&amp;&lt;&gt;&amp;&quot;&#39;&lt;/div&gt;');
+	});
+
+	it('returns empty string for nullish input', () => {
+		expect(escapeHtml(null)).toBe('');
+		expect(escapeHtml(undefined)).toBe('');
+	});
+
+	it('coerces non-string values to string', () => {
+		expect(escapeHtml(123)).toBe('123');
+		expect(escapeHtml(true)).toBe('true');
+	});
+
+	it('leaves safe strings unchanged', () => {
+		const input = 'plain text';
+		expect(escapeHtml(input)).toBe(input);
 	});
 });
