@@ -130,6 +130,106 @@ export function escapeHtml(text) {
 	return str.replace(/[&<>"']/g, char => map[char]);
 }
 
+function isLikelyBase64String(value) {
+	if (typeof value !== 'string') return false;
+	const trimmed = value.trim();
+	if (trimmed.length < 32) return false;
+	if (!/^[A-Za-z0-9+/=\s]+$/.test(trimmed)) return false;
+	return trimmed.replace(/\s+/g, '').length % 4 === 0;
+}
+
+function gatherMaskAssetMap(parsed) {
+	if (!parsed || typeof parsed !== 'object') return null;
+	const collected = {};
+	const addEntries = (obj) => {
+		if (!obj || typeof obj !== 'object') return;
+		for (const [key, value] of Object.entries(obj)) {
+			if (collected[key] === undefined) {
+				collected[key] = value;
+			}
+		}
+	};
+
+	addEntries(parsed.maskAssets);
+	addEntries(parsed.mask_assets);
+	addEntries(parsed.maskResources);
+	addEntries(parsed.mask_resources);
+	addEntries(parsed.maskData);
+	addEntries(parsed.mask_data);
+	addEntries(parsed.masks);
+	addEntries(parsed.segmentationMasks);
+	addEntries(parsed.segmentation_masks);
+
+	if (parsed.assets && typeof parsed.assets === 'object') {
+		addEntries(parsed.assets.maskAssets);
+		addEntries(parsed.assets.mask_assets);
+		addEntries(parsed.assets.masks);
+		addEntries(parsed.assets.segmentationMasks);
+		addEntries(parsed.assets.segmentation_masks);
+	}
+
+	return Object.keys(collected).length > 0 ? collected : null;
+}
+
+function normalizeMaskAssetValue(asset, fallbackMime = 'image/png') {
+	if (!asset) return null;
+
+	if (typeof asset === 'string') {
+		if (asset.startsWith('data:')) return asset;
+		if (isLikelyBase64String(asset)) return `data:${fallbackMime};base64,${asset}`;
+		return null;
+	}
+
+	if (typeof asset !== 'object') return null;
+
+	const inline = asset.inline_data || asset.inlineData;
+	if (inline && typeof inline === 'object') {
+		const mime = inline.mime_type || inline.mimeType || fallbackMime;
+		const data = inline.data || inline.base64 || inline.bytes;
+		if (typeof data === 'string' && data.length > 0) {
+			return `data:${mime};base64,${data}`;
+		}
+	}
+
+	const directData = asset.data || asset.base64 || asset.bytes || asset.png || asset.png_base64 || asset.pngBase64;
+	if (typeof directData === 'string' && directData.length > 0) {
+		if (directData.startsWith('data:')) return directData;
+		if (isLikelyBase64String(directData)) {
+			const mime = asset.mime_type || asset.mimeType || fallbackMime;
+			return `data:${mime};base64,${directData}`;
+		}
+		return null;
+	}
+
+	const url = asset.url || asset.uri || asset.href;
+	if (typeof url === 'string' && url.length > 0) {
+		return url;
+	}
+
+	return null;
+}
+
+function resolveMaskValue(maskValue, maskAssets) {
+	if (!maskValue) return null;
+
+	if (typeof maskValue === 'string') {
+		if (maskValue.startsWith('data:')) {
+			return maskValue;
+		}
+		if (isLikelyBase64String(maskValue)) {
+			return normalizeMaskAssetValue(maskValue);
+		}
+		const asset = maskAssets?.[maskValue];
+		return normalizeMaskAssetValue(asset);
+	}
+
+	if (typeof maskValue === 'object') {
+		return normalizeMaskAssetValue(maskValue);
+	}
+
+	return null;
+}
+
 /**
  * Transform new simplified response format (items array) to legacy format (detections/global_insights).
  * This allows the UI code to work with the simplified schema while maintaining backwards compatibility.
@@ -143,6 +243,7 @@ export function transformResponseFormat(parsed) {
 	
 	// If already in new format with 'items', transform it
 	if (Array.isArray(parsed.items)) {
+		const maskAssets = gatherMaskAssetMap(parsed);
 		const detections = parsed.items.map((item, idx) => {
 			const detection = {
 				id: `det_${idx}`,
@@ -153,8 +254,9 @@ export function transformResponseFormat(parsed) {
 			};
 			
 			// Add mask if present
-			if (item.mask) {
-				detection.mask = item.mask;
+			const resolvedMask = resolveMaskValue(item.mask, maskAssets);
+			if (resolvedMask) {
+				detection.mask = resolvedMask;
 			}
 			
 			// Add points if present
@@ -164,12 +266,16 @@ export function transformResponseFormat(parsed) {
 			
 			return detection;
 		});
-		
-		return {
+		const transformed = {
 			image: parsed.image || { coordSystem: 'normalized_0_1000' },
 			detections,
 			global_insights: []
 		};
+		if (maskAssets) {
+			transformed.maskAssets = maskAssets;
+		}
+		
+		return transformed;
 	}
 	
 	// Otherwise return as-is (already in legacy format)

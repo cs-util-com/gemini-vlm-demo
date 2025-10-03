@@ -424,6 +424,12 @@ function drawMask(maskDataUrl, boundingBox, rgbColor) {
 		);
 		ctx.restore();
 	};
+	img.onerror = () => {
+		console.warn('Failed to load segmentation mask image', {
+			sourcePreview: typeof maskDataUrl === 'string' ? maskDataUrl.slice(0, 32) : maskDataUrl,
+			boundingBox
+		});
+	};
 	
 	// Handle both data URLs and plain base64
 	if (maskDataUrl.startsWith('data:')) {

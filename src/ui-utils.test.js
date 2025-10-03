@@ -363,12 +363,13 @@ describe('transformResponseFormat', () => {
 	});
 
 	it('includes mask when present', () => {
+		const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQ=';
 		const input = {
 			items: [
 				{
 					label: 'person',
 					box_2d: [10, 20, 30, 40],
-					mask: 'base64maskdata',
+					mask: base64,
 					confidence: 0.9
 				}
 			]
@@ -376,7 +377,61 @@ describe('transformResponseFormat', () => {
 		
 		const result = transformResponseFormat(input);
 		
-		expect(result.detections[0]).toHaveProperty('mask', 'base64maskdata');
+		expect(result.detections[0]).toHaveProperty('mask', `data:image/png;base64,${base64}`);
+	});
+
+	it('resolves mask references from mask_assets map', () => {
+		const input = {
+			items: [
+				{
+					label: 'helmet',
+					box_2d: [5, 10, 15, 20],
+					mask: 'mask_1'
+				}
+			],
+			mask_assets: {
+				mask_1: 'iVBORw0KGgoAAAANSUhEUgAAAAUA' + 'A'.repeat(64)
+			}
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0]).toHaveProperty('mask');
+		expect(result.detections[0].mask.startsWith('data:image/png;base64,')).toBe(true);
+	});
+
+	it('supports inline_data mask objects', () => {
+		const input = {
+			items: [
+				{
+					label: 'cone',
+					box_2d: [1, 2, 3, 4],
+					mask: {
+						inline_data: {
+							mime_type: 'image/webp',
+							data: 'TWFuIGlzIGRpc3Rpbmd1aXNoZWQ=' 
+						}
+					}
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0]).toHaveProperty('mask', 'data:image/webp;base64,TWFuIGlzIGRpc3Rpbmd1aXNoZWQ=');
+	});
+
+	it('omits mask when unable to resolve placeholder', () => {
+		const input = {
+			items: [
+				{
+					label: 'barrier',
+					box_2d: [10, 10, 20, 20],
+					mask: 'mask_999'
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0].mask).toBeUndefined();
 	});
 
 	it('includes points when present', () => {
