@@ -61,6 +61,148 @@ let highlightedDetectionId = null;
 let isAnalyzing = false;
 let pendingApiKeyAnalysis = false;
 
+const SEGMENTATION_COLORS = [
+        '#E6194B',
+        '#3C89D0',
+        '#3CB44B',
+        '#FFE119',
+        '#911EB4',
+        '#42D4F4',
+        '#F58231',
+        '#F032E6',
+        '#BFEF45',
+        '#469990'
+];
+
+const SAFETY_SETTINGS = [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_SEXUAL_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+        { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_ONLY_HIGH' }
+];
+
+function getDetectionColor(index) {
+        return SEGMENTATION_COLORS[index % SEGMENTATION_COLORS.length];
+}
+
+function hexToRgb(hex) {
+        if (typeof hex !== 'string') return [255, 255, 255];
+        let normalized = hex.trim();
+        if (normalized.startsWith('#')) normalized = normalized.slice(1);
+        if (normalized.length === 3) {
+                normalized = normalized.split('').map(ch => ch + ch).join('');
+        }
+        if (normalized.length !== 6) return [255, 255, 255];
+        const r = parseInt(normalized.slice(0, 2), 16);
+        const g = parseInt(normalized.slice(2, 4), 16);
+        const b = parseInt(normalized.slice(4, 6), 16);
+        if ([r, g, b].some(v => Number.isNaN(v))) return [255, 255, 255];
+        return [r, g, b];
+}
+
+function scheduleOverlayRedraw() {
+        const raf = typeof requestAnimationFrame === 'function'
+                ? requestAnimationFrame
+                : (fn) => setTimeout(fn, 0);
+        raf(() => drawOverlays());
+}
+
+function createTintedMaskCanvas(dataUrl, color) {
+        return new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => {
+                        try {
+                                const canvasEl = document.createElement('canvas');
+                                canvasEl.width = image.width;
+                                canvasEl.height = image.height;
+                                const maskCtx = canvasEl.getContext('2d', { willReadFrequently: true });
+                                if (!maskCtx) {
+                                        resolve(null);
+                                        return;
+                                }
+                                maskCtx.imageSmoothingEnabled = false;
+                                maskCtx.drawImage(image, 0, 0);
+                                const pixels = maskCtx.getImageData(0, 0, canvasEl.width, canvasEl.height);
+                                const data = pixels.data;
+                                const [r, g, b] = hexToRgb(color);
+                                for (let i = 0; i < data.length; i += 4) {
+                                        const alpha = data[i];
+                                        data[i] = r;
+                                        data[i + 1] = g;
+                                        data[i + 2] = b;
+                                        data[i + 3] = alpha;
+                                }
+                                maskCtx.putImageData(pixels, 0, 0);
+                                resolve(canvasEl);
+                        } catch (err) {
+                                reject(err);
+                        }
+                };
+                image.onerror = reject;
+                image.src = dataUrl;
+        });
+}
+
+function normalizeSpatialResponse(parsed) {
+        const base = (parsed && typeof parsed === 'object') ? { ...parsed } : {};
+        const rawItems = Array.isArray(base.items) ? base.items : [];
+        const detections = rawItems.map((item, index) => {
+                const label = item?.label != null ? String(item.label) : `item_${index + 1}`;
+                const bboxArray = Array.isArray(item?.box_2d) ? item.box_2d.slice(0, 4) : null;
+                const bbox = (Array.isArray(bboxArray) && bboxArray.length === 4 && bboxArray.every(v => Number.isFinite(Number(v))))
+                        ? bboxArray.map(v => Number(v))
+                        : null;
+                const mask = typeof item?.mask === 'string' && item.mask.trim() !== '' ? item.mask.trim() : null;
+                const points = Array.isArray(item?.points)
+                        ? item.points
+                                .map((pt) => Array.isArray(pt) && pt.length >= 2 ? [Number(pt[0]), Number(pt[1])] : null)
+                                .filter((pt) => pt && pt.every(Number.isFinite))
+                        : [];
+                const color = getDetectionColor(index);
+                const detection = {
+                        id: item?.id != null ? String(item.id) : String(index + 1),
+                        label,
+                        category: 'object',
+                        confidence: typeof item?.confidence === 'number' ? item.confidence : undefined,
+                        bbox,
+                        mask,
+                        points,
+                        displayColor: color
+                };
+                if (mask) {
+                        detection.maskDataUrl = mask.startsWith('data:') ? mask : `data:image/png;base64,${mask}`;
+                }
+                return detection;
+        });
+
+        return {
+                ...base,
+                items: rawItems,
+                detections,
+                global_insights: Array.isArray(base.global_insights) ? base.global_insights : []
+        };
+}
+
+function primeMaskAssets(detections) {
+        if (!Array.isArray(detections)) return;
+        for (const det of detections) {
+                if (!det || !det.maskDataUrl || det.maskCanvas || det._maskLoading) continue;
+                det._maskLoading = true;
+                createTintedMaskCanvas(det.maskDataUrl, det.displayColor || colorForCategory(det.category))
+                        .then((canvasEl) => {
+                                det.maskCanvas = canvasEl || null;
+                        })
+                        .catch(() => {
+                                det.maskCanvas = null;
+                        })
+                        .finally(() => {
+                                det._maskLoading = false;
+                                scheduleOverlayRedraw();
+                        });
+        }
+}
+
 // ---------- Helpers ----------
 function logJson(obj, note) {
 	jsonOut.textContent = formatJsonOutput(obj, note);
@@ -84,57 +226,100 @@ function drawOverlays() {
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
 	ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 
-	const detections = Array.isArray(result.detections) ? result.detections : [];
-	const scaleX = canvas.width / naturalW;
-	const scaleY = canvas.height / naturalH;
-	const coordSystem = ensureCoordSystem(result, 'normalized_0_1000');
-	const coordOrigin = ensureCoordOrigin(result, 'top-left');
+        const detections = Array.isArray(result.detections) ? result.detections : [];
+        const scaleX = canvas.width / naturalW;
+        const scaleY = canvas.height / naturalH;
+        const coordSystem = ensureCoordSystem(result, 'normalized_0_1000');
+        const coordOrigin = ensureCoordOrigin(result, 'top-left');
 
-	for (const d of detections) {
-		const isHighlighted = highlightedDetectionId === d.id;
-		const color = colorForCategory(d.category);
-		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
+        primeMaskAssets(detections);
 
-		// Draw with extra emphasis if highlighted
-		if (isHighlighted) {
-			ctx.save();
-			ctx.shadowColor = color;
-			ctx.shadowBlur = 15;
-		}
+        for (const d of detections) {
+                const isHighlighted = highlightedDetectionId === d.id;
+                const color = d?.displayColor || colorForCategory(d.category);
+                const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
+                let boxForDrawing = null;
+                let labelPlaced = false;
 
-		if (d.bbox) {
-			const b = toCanvasBox(
-				d.bbox,
-				coordSystem,
-				scaleX,
-				scaleY,
-				naturalW,
-				naturalH,
-				coordOrigin,
-				canvas.width,
-				canvas.height
-			);
-			if (b) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawBox(b, label, color);
-			}
-		}
-		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
-			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
-			if (pts) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawPolygon(pts, label, color);
-			}
-		}
+                if (isHighlighted) {
+                        ctx.save();
+                        ctx.shadowColor = color;
+                        ctx.shadowBlur = 15;
+                }
 
-		if (isHighlighted) {
-			ctx.restore();
-		}
-	}
+                if (d.bbox) {
+                        const b = toCanvasBox(
+                                d.bbox,
+                                coordSystem,
+                                scaleX,
+                                scaleY,
+                                naturalW,
+                                naturalH,
+                                coordOrigin,
+                                canvas.width,
+                                canvas.height
+                        );
+                        if (b) {
+                                boxForDrawing = b;
+                        }
+                }
+
+                if (d.maskCanvas && boxForDrawing) {
+                        ctx.save();
+                        ctx.globalAlpha = isHighlighted ? 0.6 : 0.4;
+                        ctx.drawImage(d.maskCanvas, boxForDrawing.x, boxForDrawing.y, boxForDrawing.width, boxForDrawing.height);
+                        ctx.restore();
+                }
+
+                if (boxForDrawing) {
+                        drawBox(boxForDrawing, label, color, isHighlighted ? 4 : 2);
+                        labelPlaced = true;
+                }
+
+                if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
+                        const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
+                        if (pts) {
+                                drawPolygon(pts, label, color, isHighlighted ? 4 : 2);
+                                if (!labelPlaced && pts.length > 0) {
+                                        drawLabelBox(pts[0].x, pts[0].y, label);
+                                        labelPlaced = true;
+                                }
+                        }
+                }
+
+                if (Array.isArray(d.points) && d.points.length > 0) {
+                        ctx.save();
+                        ctx.fillStyle = color;
+                        ctx.strokeStyle = '#000000';
+                        ctx.lineWidth = isHighlighted ? 2 : 1.25;
+                        const baseRadius = Math.max(4, Math.min(canvas.width, canvas.height) * 0.01);
+                        for (let i = 0; i < d.points.length; i++) {
+                                const point = d.points[i];
+                                if (!Array.isArray(point) || point.length < 2) continue;
+                                const [py, px] = point;
+                                if (!Number.isFinite(py) || !Number.isFinite(px)) continue;
+                                const cx = (px / 1000) * canvas.width;
+                                const cy = (py / 1000) * canvas.height;
+                                ctx.beginPath();
+                                ctx.arc(cx, cy, baseRadius, 0, Math.PI * 2);
+                                ctx.fill();
+                                ctx.stroke();
+                                if (!labelPlaced && i === 0) {
+                                        drawLabelBox(cx, cy, label);
+                                        labelPlaced = true;
+                                }
+                        }
+                        ctx.restore();
+                }
+
+                if (!labelPlaced && !boxForDrawing && (!Array.isArray(d.points) || d.points.length === 0)) {
+                        drawLabelBox(8, 20, label);
+                }
+
+                if (isHighlighted) {
+                        ctx.restore();
+                }
+        }
 }
 
 function getStoredApiKey() {
@@ -315,23 +500,23 @@ function drawLabelBox(x, y, text) {
 	ctx.restore();
 }
 
-function drawBox(b, label, color) {
-	ctx.save();
-	ctx.lineWidth = 2;
-	ctx.strokeStyle = color;
-	ctx.strokeRect(b.x, b.y, b.width, b.height);
-	drawLabelBox(b.x, b.y, label);
-	ctx.restore();
+function drawBox(b, label, color, lineWidth = 2) {
+        ctx.save();
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = color;
+        ctx.strokeRect(b.x, b.y, b.width, b.height);
+        drawLabelBox(b.x, b.y, label);
+        ctx.restore();
 }
 
-function drawPolygon(points, label, color) {
-	if (!points || points.length < 3) return;
-	ctx.save();
-	ctx.lineWidth = 2;
-	ctx.strokeStyle = color;
-	ctx.beginPath();
-	ctx.moveTo(points[0].x, points[0].y);
-	for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+function drawPolygon(points, label, color, lineWidth = 2) {
+        if (!points || points.length < 3) return;
+        ctx.save();
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
 	ctx.closePath();
 	ctx.stroke();
 	// Label near first vertex
@@ -348,26 +533,32 @@ async function callGeminiREST({ apiKey, model, file }) {
 	const mimeType = preprocess.mimeType || blob.type || file.type || 'image/jpeg';
 	preprocess.base64Length = base64.length;
 
-	const parts = [
-		{ inline_data: { mime_type: mimeType, data: base64 } },
-		{ text: AEC_PROMPT }
-	];
+        const parts = [
+                { inline_data: { mime_type: mimeType, data: base64 } },
+                { text: AEC_PROMPT }
+        ];
 
-	// Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
-	const snake = {
-		contents: [{ parts }],
-		generationConfig: {
-			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA
-		}
-	};
-	const camel = {
-		contents: [{ parts }],
-		generationConfig: {
-			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA
-		}
-	};
+        const userContent = { role: 'user', parts };
+        const camel = {
+                contents: [userContent],
+                generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: RESPONSE_SCHEMA,
+                        temperature: 0
+                },
+                safetySettings: SAFETY_SETTINGS,
+                thinkingConfig: { thinkingBudget: 0 }
+        };
+        const snake = {
+                contents: [userContent],
+                generation_config: {
+                        response_mime_type: "application/json",
+                        response_schema: RESPONSE_SCHEMA,
+                        temperature: 0
+                },
+                safety_settings: SAFETY_SETTINGS,
+                thinking_config: { thinking_budget: 0 }
+        };
 
 	const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 	async function post(body) {
@@ -387,18 +578,18 @@ async function callGeminiREST({ apiKey, model, file }) {
 		return data;
 	}
 
-	try {
-		const data = await post(snake);
-		return { data, preprocess };
-	} catch (e1) {
-		// Retry with camelCase schema fields if the first fails
-		try {
-			const data = await post(camel);
-			return { data, preprocess };
-		} catch (e2) {
-			const err = new Error(`Gemini call failed.\nFirst: ${e1.message}\nThen: ${e2.message}`);
-			err.preprocess = preprocess;
-			throw err;
+        try {
+                const data = await post(camel);
+                return { data, preprocess };
+        } catch (e1) {
+                // Retry with camelCase schema fields if the first fails
+                try {
+                        const data = await post(snake);
+                        return { data, preprocess };
+                } catch (e2) {
+                        const err = new Error(`Gemini call failed.\nFirst: ${e1.message}\nThen: ${e2.message}`);
+                        err.preprocess = preprocess;
+                        throw err;
 		}
 	}
 }
@@ -406,8 +597,8 @@ async function callGeminiREST({ apiKey, model, file }) {
 // extractJSONFromResponse is now imported from ui-utils.js
 
 async function analyzeImageBatch(files) {
-	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+        const apiKey = apiKeyEl.value.trim();
+        const model  = modelEl.value.trim() || 'gemini-2.5-flash';
 
 	if (!apiKey) {
 		logJson({ error: 'Missing API key' }, 'Error');
@@ -459,24 +650,27 @@ async function analyzeImageBatch(files) {
 			updateThumbnailStatus(currentSession.images.indexOf(image));
 
 			// Analyze image
-			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const parsed = extractJSONFromResponse(resp);
+                        const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
+                        const parsed = extractJSONFromResponse(resp);
+                        const normalized = normalizeSpatialResponse(parsed);
 
-			// Load bitmap for this image
-			const bitmap = await createImageBitmap(image.file);
-			imageBitmaps[image.imageId] = bitmap;
+                        // Load bitmap for this image
+                        const bitmap = await createImageBitmap(image.file);
+                        imageBitmaps[image.imageId] = bitmap;
 
-			prepareDetectionData(parsed, bitmap.width, bitmap.height);
-			if (!parsed.image) parsed.image = {};
-			parsed.image.preprocessing = preprocess;
-			image.preprocessing = preprocess;
+                        prepareDetectionData(normalized, bitmap.width, bitmap.height);
+                        if (!normalized.image) normalized.image = {};
+                        normalized.image.preprocessing = preprocess;
+                        image.preprocessing = preprocess;
 
-			const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
-			ensureCoordOrigin(parsed, 'top-left');
-			if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
+                        const coordSystem = ensureCoordSystem(normalized, 'normalized_0_1000');
+                        ensureCoordOrigin(normalized, 'top-left');
+                        if (normalized.image.coordSystem == null) normalized.image.coordSystem = coordSystem;
 
-			// Update status to completed
-			updateImageStatus(currentSession, image.imageId, 'completed', parsed);
+                        primeMaskAssets(normalized.detections);
+
+                        // Update status to completed
+                        updateImageStatus(currentSession, image.imageId, 'completed', normalized);
 			updateThumbnailStatus(currentSession.images.indexOf(image));
 
 			completed++;

@@ -34,41 +34,41 @@ describe('colorForCategory', () => {
 });
 
 describe('extractJSONFromResponse', () => {
-	it('extracts JSON from valid Gemini response', () => {
-		const resp = {
-			candidates: [{
-				content: {
-					parts: [{ text: '{"detections": []}' }]
-				}
-			}]
-		};
-		const result = extractJSONFromResponse(resp);
-		expect(result).toEqual({ detections: [] });
-	});
+        it('extracts JSON from valid Gemini response', () => {
+                const resp = {
+                        candidates: [{
+                                content: {
+                                        parts: [{ text: '{"items": []}' }]
+                                }
+                        }]
+                };
+                const result = extractJSONFromResponse(resp);
+                expect(result).toEqual({ items: [] });
+        });
 
-	it('strips markdown json code blocks', () => {
-		const resp = {
-			candidates: [{
-				content: {
-					parts: [{ text: '```json\n{"detections": []}\n```' }]
-				}
-			}]
-		};
-		const result = extractJSONFromResponse(resp);
-		expect(result).toEqual({ detections: [] });
-	});
+        it('strips markdown json code blocks', () => {
+                const resp = {
+                        candidates: [{
+                                content: {
+                                        parts: [{ text: '```json\n{"items": []}\n```' }]
+                                }
+                        }]
+                };
+                const result = extractJSONFromResponse(resp);
+                expect(result).toEqual({ items: [] });
+        });
 
-	it('handles whitespace around JSON', () => {
-		const resp = {
-			candidates: [{
-				content: {
-					parts: [{ text: '  \n{"detections": []}\n  ' }]
-				}
-			}]
-		};
-		const result = extractJSONFromResponse(resp);
-		expect(result).toEqual({ detections: [] });
-	});
+        it('handles whitespace around JSON', () => {
+                const resp = {
+                        candidates: [{
+                                content: {
+                                        parts: [{ text: '  \n{"items": []}\n  ' }]
+                                }
+                        }]
+                };
+                const result = extractJSONFromResponse(resp);
+                expect(result).toEqual({ items: [] });
+        });
 
 	it('throws error when no candidates', () => {
 		expect(() => extractJSONFromResponse({})).toThrow('No text JSON found in response.');
