@@ -13,6 +13,9 @@ export function renderSessionSummary(session) {
 	const safetyHigh = agg.safetyBySeverity.high || 0;
 	const safetyMed = agg.safetyBySeverity.medium || 0;
 	const safetyLow = agg.safetyBySeverity.low || 0;
+	const aggregateCharts = renderSessionAggregateCharts(agg);
+	const globalInsights = collectSessionGlobalInsights(session);
+	const insightsPanel = renderSessionGlobalInsights(globalInsights);
 
 	return `
 		<div class="session-summary">
@@ -48,6 +51,8 @@ export function renderSessionSummary(session) {
 			` : ''}
 
 			${renderImagesSafetyHeatmap(agg.imagesSafety)}
+			${aggregateCharts}
+			${insightsPanel}
 
 			<div class="export-buttons">
 				<button class="export-btn" id="exportCSV">📥 Export CSV</button>
@@ -83,10 +88,156 @@ function renderImagesSafetyHeatmap(imagesSafety) {
 /**
  * Render section header for individual image results
  */
-export function renderImageSectionHeader(imageId, fileName, imageNumber) {
+export function renderImageSectionHeader(imageId, fileName, imageNumber, options = {}) {
+	const { asSummary = false, status = 'completed', detectionCount = null } = options;
+	const statusLabel = statusLabelFor(status);
+	const detectionMeta = typeof detectionCount === 'number' ? `${detectionCount} detections` : null;
+	const metaParts = [statusLabel, detectionMeta].filter(Boolean);
+	const metaText = metaParts.length > 0 ? metaParts.join(' • ') : '';
+	const title = `🖼️ Image ${imageNumber}: ${escapeHtml(fileName)}`;
+
+	if (asSummary) {
+		return `
+			<summary class="image-section-header" data-image-id="${imageId}">
+				<span class="image-section-title">${title}</span>
+				${metaText ? `<span class="image-section-meta">${escapeHtml(metaText)}</span>` : ''}
+			</summary>
+		`;
+	}
+
 	return `
-		<div class="image-section-header" id="image-section-${imageId}">
-			<span>🖼️ Image ${imageNumber}: ${escapeHtml(fileName)}</span>
+		<div class="image-section-header" id="image-section-${imageId}" data-image-id="${imageId}">
+			<span class="image-section-title">${title}</span>
+			${metaText ? `<span class="image-section-meta">${escapeHtml(metaText)}</span>` : ''}
 		</div>
 	`;
+}
+
+function renderSessionAggregateCharts(agg) {
+	const hasCategory = Array.isArray(agg.countsByCategory) && agg.countsByCategory.length > 0;
+	const hasLabel = Array.isArray(agg.countsByLabel) && agg.countsByLabel.length > 0;
+	if (!hasCategory && !hasLabel) return '';
+
+	let html = '<div class="session-aggregate-panel">';
+	if (hasCategory) {
+		html += '<h3 class="session-panel-title">Detections by Category</h3>';
+		const max = Math.max(...agg.countsByCategory.map(item => item.count));
+		html += '<div class="aggregate-chart">';
+		html += agg.countsByCategory.map(item => {
+			const width = max > 0 ? (item.count / max) * 100 : 0;
+			const label = escapeHtml(item.category.replace(/_/g, ' '));
+			return `
+				<div class="aggregate-bar">
+					<div class="aggregate-bar-header">
+						<span class="aggregate-bar-label">${label}</span>
+						<span class="aggregate-bar-count">${item.count}</span>
+					</div>
+					<div class="aggregate-bar-bg">
+						<div class="aggregate-bar-fill category-${escapeHtml(item.category)}" style="width:${width}%">${item.count}</div>
+					</div>
+				</div>
+			`;
+		}).join('');
+		html += '</div>';
+	}
+
+	if (hasLabel) {
+		html += '<h3 class="session-panel-title" style="margin-top:20px;">Top Labels (Session)</h3>';
+		const topLabels = agg.countsByLabel.slice(0, 10);
+		const max = Math.max(...topLabels.map(item => item.count));
+		html += '<div class="aggregate-chart">';
+		html += topLabels.map(item => {
+			const width = max > 0 ? (item.count / max) * 100 : 0;
+			return `
+				<div class="aggregate-bar">
+					<div class="aggregate-bar-header">
+						<span class="aggregate-bar-label">${escapeHtml(item.label)}</span>
+						<span class="aggregate-bar-count">${item.count}</span>
+					</div>
+					<div class="aggregate-bar-bg">
+						<div class="aggregate-bar-fill category-other" style="width:${width}%; background:#4a4aff;">${item.count}</div>
+					</div>
+				</div>
+			`;
+		}).join('');
+		html += '</div>';
+	}
+
+	return `${html}</div>`;
+}
+
+function collectSessionGlobalInsights(session) {
+	const insights = [];
+	if (!session || !Array.isArray(session.images)) return insights;
+
+	session.images.forEach((img, idx) => {
+		if (img.status !== 'completed' || !img.result) return;
+		const list = Array.isArray(img.result.global_insights) ? img.result.global_insights : [];
+		const imageNumber = idx + 1;
+		list.forEach(insight => {
+			insights.push({
+				...insight,
+				imageNumber,
+				imageId: img.imageId,
+				fileName: img.fileName
+			});
+		});
+	});
+
+	return insights.sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+}
+
+function renderSessionGlobalInsights(insights) {
+	if (!Array.isArray(insights) || insights.length === 0) return '';
+
+	const cards = insights.map(insight => {
+		const confidence = typeof insight.confidence === 'number' ? (insight.confidence * 100).toFixed(0) : '?';
+		const metricsHtml = Array.isArray(insight.metrics) && insight.metrics.length > 0
+			? `<div class="insight-metrics">${insight.metrics.map(metric => {
+				const unit = metric.unit ? ` ${escapeHtml(metric.unit)}` : '';
+				return `
+					<div class="insight-metric">
+						<span class="insight-metric-key">${escapeHtml(metric.key)}:</span>
+						<span class="insight-metric-value">${escapeHtml(String(metric.value))}${unit}</span>
+					</div>
+				`;
+			}).join('')}</div>`
+			: '';
+
+		const label = insight.name || (Array.isArray(insight.labels) ? insight.labels[0] : '') || `Insight`;
+		const source = `Image ${insight.imageNumber}: ${escapeHtml(insight.fileName)}`;
+		return `
+			<div class="session-insight-card" data-image-id="${insight.imageId}">
+				<div class="session-insight-header">
+					<span class="session-insight-title">${escapeHtml(label)}</span>
+					<span class="session-insight-meta">${escapeHtml(source)}</span>
+				</div>
+				<div class="session-insight-desc">${escapeHtml(insight.description || '')}</div>
+				<div class="session-insight-confidence">Confidence: ${confidence}%</div>
+				${metricsHtml}
+			</div>
+		`;
+	}).join('');
+
+	return `
+		<div class="session-global-insights">
+			<h3 class="session-panel-title">Global Insights Across Session</h3>
+			<div class="session-insight-grid">${cards}</div>
+		</div>
+	`;
+}
+
+function statusLabelFor(status) {
+	switch (status) {
+		case 'completed':
+			return 'Completed';
+		case 'analyzing':
+			return 'Analyzing';
+		case 'error':
+			return 'Error';
+		case 'queued':
+			return 'Queued';
+		default:
+			return status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown';
+	}
 }

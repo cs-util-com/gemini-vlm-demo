@@ -338,6 +338,15 @@ async function switchToImage(index) {
 	// Scroll to image section in report
 	const section = document.getElementById(`image-section-${img.imageId}`);
 	if (section) {
+		if (section.tagName === 'DETAILS') {
+			section.open = true;
+			// Optionally collapse other sections to keep focus
+			reportWrap.querySelectorAll('details.session-image-panel').forEach(detail => {
+				if (detail !== section) {
+					detail.open = false;
+				}
+			});
+		}
 		section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 }
@@ -755,24 +764,32 @@ function renderSessionReport() {
 
 	let html = '';
 
-	// Session summary
+	// Session summary (global panels)
 	html += renderSessionSummary(currentSession);
 
-	// Per-image sections
+	// Per-image sections (collapsed by default)
 	for (let i = 0; i < currentSession.images.length; i++) {
 		const img = currentSession.images[i];
-		
+		const sectionId = `image-section-${img.imageId}`;
+		const detectionCount = Array.isArray(img.result?.detections) ? img.result.detections.length : null;
+		html += `<details class="session-image-panel" id="${sectionId}" data-image-id="${img.imageId}">`;
+		html += renderImageSectionHeader(img.imageId, img.fileName, i + 1, {
+			asSummary: true,
+			status: img.status,
+			detectionCount
+		});
+
 		if (img.status === 'completed' && img.result) {
-			html += renderImageSectionHeader(img.imageId, img.fileName, i + 1);
-			html += '<div style="margin: 0 20px;">';
+			html += '<div class="session-image-body">';
 			html += renderReportUI(img.result);
 			html += '</div>';
 		} else if (img.status === 'error') {
-			html += renderImageSectionHeader(img.imageId, img.fileName, i + 1);
-			html += `<div style="margin: 16px 20px; padding: 16px; background: #1a0f0f; border: 1px solid #4a2020; border-radius: 8px; color: #ff4444;">
-				<strong>Analysis failed:</strong> ${escapeHtml(img.error?.message || 'Unknown error')}
-			</div>`;
+			html += `<div class="session-image-body session-image-error">
+			<strong>Analysis failed:</strong> ${escapeHtml(img.error?.message || 'Unknown error')}
+		</div>`;
 		}
+
+		html += '</details>';
 	}
 
 	reportWrap.innerHTML = html;
@@ -802,6 +819,19 @@ function renderSessionReport() {
 		chip.dataset.navBound = 'true';
 		chip.addEventListener('click', () => {
 			const imageId = chip.dataset.imageId;
+			if (!imageId) return;
+			const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
+			if (targetIndex >= 0) {
+				switchToImage(targetIndex);
+			}
+		});
+	});
+
+	reportWrap.querySelectorAll('.session-insight-card').forEach(card => {
+		if (card.dataset.navBound === 'true') return;
+		card.dataset.navBound = 'true';
+		card.addEventListener('click', () => {
+			const imageId = card.dataset.imageId;
 			if (!imageId) return;
 			const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
 			if (targetIndex >= 0) {

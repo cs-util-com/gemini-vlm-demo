@@ -130,10 +130,29 @@
   .summary-card { background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:12px; }
   .summary-card-value { font-size:28px; font-weight:700; color:#4a4aff; }
   .summary-card-label { font-size:12px; color:#9aa0b4; margin-top:4px; }
-  .export-buttons { display:flex; gap:12px; margin-top:16px; }
+  .session-panel-title { margin:0 0 12px; font-size:16px; font-weight:600; color:#cfd5e4; }
+  .session-aggregate-panel { margin-top:20px; padding:16px; background:#141420; border:1px solid #2a2a3b; border-radius:10px; }
+  .session-global-insights { margin-top:20px; padding:16px; background:#141420; border:1px solid #2a2a3b; border-radius:10px; }
+  .session-insight-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+  .session-insight-card { background:#111827; border:1px solid #1f2937; border-radius:8px; padding:14px; cursor:pointer; transition: all 0.2s; }
+  .session-insight-card:hover { border-color:#4a4aff; box-shadow: 0 4px 14px rgba(74,74,255,0.25); transform: translateY(-1px); }
+  .session-insight-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:6px; }
+  .session-insight-title { font-weight:600; font-size:14px; color:#f9fafb; }
+  .session-insight-meta { font-size:12px; color:#9aa0b4; text-align:right; }
+  .session-insight-desc { font-size:13px; color:#cfd5e4; margin-bottom:8px; }
+  .session-insight-confidence { font-size:12px; color:#9aa0b4; margin-bottom:6px; }
+  .export-buttons { display:flex; gap:12px; margin-top:20px; }
   .export-btn { background:#4a4aff; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:14px; font-weight:600; cursor:pointer; transition: all 0.2s; }
   .export-btn:hover { background:#5a5aff; transform: translateY(-1px); }
-  .image-section-header { background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:12px 16px; margin:16px 20px 0; font-weight:600; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .session-image-panel { margin:16px 20px; background:#11111a; border:1px solid #1e1e2e; border-radius:12px; overflow:hidden; }
+  .image-section-header { display:flex; justify-content:space-between; align-items:center; gap:12px; font-weight:600; font-size:16px; }
+  .session-image-panel summary.image-section-header { list-style:none; padding:16px 20px; background:#141420; cursor:pointer; user-select:none; }
+  .session-image-panel summary.image-section-header::-webkit-details-marker { display:none; }
+  .session-image-panel[open] summary.image-section-header { border-bottom:1px solid #1e1e2e; }
+  .image-section-title { display:flex; align-items:center; gap:8px; }
+  .image-section-meta { font-size:13px; color:#9aa0b4; }
+  .session-image-body { padding:20px; }
+  .session-image-error { background:#1a0f0f; border-top:1px solid #4a2020; border-bottom-left-radius:12px; border-bottom-right-radius:12px; color:#ff4444; }
 </style>
 </head>
 <body>
