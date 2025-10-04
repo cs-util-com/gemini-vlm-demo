@@ -261,6 +261,107 @@ describe('session-manager', () => {
 			expect(aggregates.imagesSafety[0].safetyCount).toBe(3);
 		});
 
+		it('should aggregate progress percentages across detections and insights', () => {
+			const session = createSession([
+				{ name: 'img1.jpg' },
+				{ name: 'img2.jpg' }
+			]);
+
+			updateImageStatus(session, 'img_001', 'completed', {
+				detections: [
+					{
+						id: 'p1',
+						label: 'Zone A framing',
+						category: 'progress',
+						progress: { phase: 'Framing', percentComplete: 60 }
+					}
+				],
+				global_insights: [
+					{
+						category: 'progress',
+						name: 'Overall shell',
+						confidence: 0.9,
+						metrics: [{ key: 'percent_complete', value: 75 }]
+					}
+				]
+			});
+
+			updateImageStatus(session, 'img_002', 'completed', {
+				detections: [
+					{
+						id: 'p2',
+						label: 'Interior finishing',
+						category: 'progress',
+						progress: { phase: 'Finishing', percentComplete: 80 }
+					}
+				]
+			});
+
+			const aggregates = calculateSessionAggregates(session);
+			const summary = aggregates.progressSummary;
+
+			expect(summary.totalEntries).toBe(3);
+			expect(summary.averagePercent).toBeCloseTo((60 + 75 + 80) / 3);
+			expect(summary.byImage).toHaveLength(2);
+			expect(summary.byImage[0]).toMatchObject({ imageNumber: 2, averagePercent: 80 });
+			expect(summary.phaseCounts.find(phase => phase.name === 'Framing')?.count).toBeGreaterThan(0);
+			expect(summary.phaseCounts.find(phase => phase.name === 'Finishing')?.count).toBeGreaterThan(0);
+			expect(summary.sourceCounts.detection).toBe(2);
+			expect(summary.sourceCounts.insight).toBe(1);
+		});
+
+		it('should normalize progress values and track phases without explicit percentages', () => {
+			const session = createSession([{ name: 'big-site.jpg' }]);
+
+			updateImageStatus(session, 'img_001', 'completed', {
+				detections: [
+					{
+						id: 'neg',
+						label: 'Excavation trench',
+						category: 'progress',
+						progress: { phase: 'Excavation', percentComplete: -10 }
+					},
+					{
+						id: 'over',
+						label: 'Structural frame',
+						category: 'progress',
+						progress: { phase: 'Structure', percentComplete: 150 }
+					},
+					{
+						id: 'fraction',
+						label: 'Envelope install',
+						category: 'progress',
+						progress: { phase: 'Envelope', percentComplete: 0.5 }
+					},
+					{
+						id: 'noPercent',
+						label: 'Drywall staging',
+						category: 'progress',
+						progress: { phase: 'Drywall' }
+					}
+				],
+				global_insights: [
+					{
+						category: 'progress',
+						name: 'Site readiness',
+						percentComplete: 0.6,
+						confidence: 0.8
+					}
+				]
+			});
+
+			const aggregates = calculateSessionAggregates(session);
+			const summary = aggregates.progressSummary;
+
+			expect(summary.totalEntries).toBe(4);
+			expect(summary.averagePercent).toBeCloseTo((0 + 100 + 50 + 60) / 4);
+			expect(summary.byImage[0].averagePercent).toBeCloseTo(summary.averagePercent);
+			expect(summary.topEntry.percent).toBe(100);
+			expect(summary.sourceCounts.detection).toBe(3);
+			expect(summary.sourceCounts.insight).toBe(1);
+			expect(summary.phaseCounts.find(phase => phase.name === 'Drywall')?.count).toBe(1);
+		});
+
 			it('should fill in defaults when detection metadata is missing', () => {
 				const session = createSession([{ name: 'img1.jpg' }]);
 

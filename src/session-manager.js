@@ -81,22 +81,105 @@ export function getSessionProgress(session) {
  * @returns {object} Session aggregates
  */
 export function calculateSessionAggregates(session) {
-	const completedImages = session.images.filter(img => img.status === 'completed' && img.result);
-	
 	let totalDetections = 0;
 	let totalSafetyIssues = 0;
 	const safetyBySeverity = { high: 0, medium: 0, low: 0 };
 	const countsByCategory = {};
 	const countsByLabel = {};
 	const imagesSafety = [];
+	const progressEntries = [];
+	const progressByImage = new Map();
+	const phaseCounts = new Map();
+	const progressSourceCounts = { detection: 0, insight: 0 };
 
-	for (const image of completedImages) {
+	const normalizePercent = (value) => {
+		if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+		let percent = value;
+		if (percent <= 1 && percent > 0) {
+			percent = percent * 100;
+		}
+		if (percent < 0) percent = 0;
+		if (percent > 100) percent = 100;
+		return percent;
+	};
+
+	const incrementPhase = (phase) => {
+		if (!phase) return;
+		const trimmed = String(phase).trim();
+		if (!trimmed) return;
+		const key = trimmed.toLowerCase();
+		const existing = phaseCounts.get(key);
+		if (existing) {
+			existing.count += 1;
+		} else {
+			phaseCounts.set(key, { name: trimmed, count: 1 });
+		}
+	};
+
+	const registerProgress = ({ image, imageNumber, percent, label, phase, source }) => {
+		if (phase) incrementPhase(phase);
+		const normalizedPercent = normalizePercent(percent);
+		if (normalizedPercent == null) {
+			return;
+		}
+
+		const entry = {
+			imageId: image.imageId,
+			fileName: image.fileName,
+			imageNumber,
+			percent: normalizedPercent,
+			label: label || 'Progress',
+			phase: phase || null,
+			source
+		};
+		progressEntries.push(entry);
+		progressSourceCounts[source] = (progressSourceCounts[source] || 0) + 1;
+
+		let perImage = progressByImage.get(image.imageId);
+		if (!perImage) {
+			perImage = {
+				imageId: image.imageId,
+				fileName: image.fileName,
+				imageNumber,
+				percents: [],
+				phases: new Set()
+			};
+			progressByImage.set(image.imageId, perImage);
+		}
+
+		perImage.percents.push(normalizedPercent);
+		if (phase) {
+			perImage.phases.add(String(phase).trim());
+		}
+	};
+
+	const extractPercentFromInsight = (insight) => {
+		if (!insight) return null;
+		if (typeof insight.percentComplete === 'number') {
+			return insight.percentComplete;
+		}
+		if (Array.isArray(insight.metrics)) {
+			const metric = insight.metrics.find(metric => {
+				if (!metric || typeof metric.value !== 'number' || !metric.key) return false;
+				const key = String(metric.key).toLowerCase();
+				return key.includes('percent') || key.includes('complete');
+			});
+			if (metric) {
+				return metric.value;
+			}
+		}
+		return null;
+	};
+
+	session.images.forEach((image, index) => {
+		if (image.status !== 'completed' || !image.result) return;
+
+		const imageNumber = index + 1;
 		const result = image.result;
 		const detections = Array.isArray(result.detections) ? result.detections : [];
-		
+
 		totalDetections += detections.length;
 
-		// Count by category
 		for (const det of detections) {
 			const category = det.category || 'other';
 			countsByCategory[category] = (countsByCategory[category] || 0) + 1;
@@ -104,15 +187,42 @@ export function calculateSessionAggregates(session) {
 			const label = det.label || 'unknown';
 			countsByLabel[label] = (countsByLabel[label] || 0) + 1;
 
-			// Track safety issues
 			if (category === 'safety_issue') {
 				totalSafetyIssues++;
 				const severity = det.safety?.severity || 'low';
 				safetyBySeverity[severity] = (safetyBySeverity[severity] || 0) + 1;
 			}
+
+			if (category === 'progress' && det.progress) {
+				const percent = det.progress.percentComplete ?? det.progress.percent ?? null;
+				const phase = det.progress.phase || det.label;
+				registerProgress({
+					image,
+					imageNumber,
+					percent,
+					label: det.label,
+					phase,
+					source: 'detection'
+				});
+			}
 		}
 
-		// Per-image safety summary
+		const insights = Array.isArray(result.global_insights) ? result.global_insights : [];
+		const progressInsights = insights.filter(ins => ins && ins.category === 'progress');
+		for (const insight of progressInsights) {
+			const percent = extractPercentFromInsight(insight);
+			const label = insight.name || (Array.isArray(insight.labels) && insight.labels[0]) || 'Progress insight';
+			const phase = insight.phase || insight.progress?.phase || label;
+			registerProgress({
+				image,
+				imageNumber,
+				percent,
+				label,
+				phase,
+				source: 'insight'
+			});
+		}
+
 		const imageSafetyIssues = detections.filter(d => d.category === 'safety_issue');
 		const maxSeverity = imageSafetyIssues.reduce((max, det) => {
 			const severity = det.safety?.severity || 'low';
@@ -127,9 +237,8 @@ export function calculateSessionAggregates(session) {
 			safetyCount: imageSafetyIssues.length,
 			maxSeverity: imageSafetyIssues.length > 0 ? maxSeverity : 'none'
 		});
-	}
+	});
 
-	// Sort and format
 	const countsByCategorySorted = Object.entries(countsByCategory)
 		.map(([category, count]) => ({ category, count }))
 		.sort((a, b) => b.count - a.count);
@@ -138,13 +247,59 @@ export function calculateSessionAggregates(session) {
 		.map(([label, count]) => ({ label, count }))
 		.sort((a, b) => b.count - a.count);
 
+	const progressByImageList = Array.from(progressByImage.values()).map(entry => {
+		const count = entry.percents.length;
+		const total = entry.percents.reduce((sum, val) => sum + val, 0);
+		const average = count > 0 ? total / count : null;
+		const max = count > 0 ? Math.max(...entry.percents) : null;
+		const min = count > 0 ? Math.min(...entry.percents) : null;
+		return {
+			imageId: entry.imageId,
+			fileName: entry.fileName,
+			imageNumber: entry.imageNumber,
+			averagePercent: average,
+			maxPercent: max,
+			minPercent: min,
+			phases: Array.from(entry.phases)
+		};
+	}).sort((a, b) => {
+		const aVal = Number.isFinite(a.averagePercent) ? a.averagePercent : -Infinity;
+		const bVal = Number.isFinite(b.averagePercent) ? b.averagePercent : -Infinity;
+		return bVal - aVal;
+	});
+
+	const averageProgress = progressEntries.length > 0
+		? progressEntries.reduce((sum, entry) => sum + entry.percent, 0) / progressEntries.length
+		: null;
+
+	const topEntry = progressEntries.length > 0
+		? progressEntries.reduce((max, entry) => (entry.percent > max.percent ? entry : max), progressEntries[0])
+		: null;
+
+	const bottomEntry = progressEntries.length > 0
+		? progressEntries.reduce((min, entry) => (entry.percent < min.percent ? entry : min), progressEntries[0])
+		: null;
+
+	const phaseCountsList = Array.from(phaseCounts.values()).sort((a, b) => b.count - a.count);
+
+	const progressSummary = {
+		totalEntries: progressEntries.length,
+		averagePercent: averageProgress,
+		byImage: progressByImageList,
+		topEntry,
+		bottomEntry,
+		phaseCounts: phaseCountsList,
+		sourceCounts: progressSourceCounts
+	};
+
 	return {
 		totalDetections,
 		totalSafetyIssues,
 		safetyBySeverity,
 		countsByCategory: countsByCategorySorted,
 		countsByLabel: countsByLabelSorted,
-		imagesSafety
+		imagesSafety,
+		progressSummary
 	};
 }
 
