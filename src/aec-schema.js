@@ -1,16 +1,16 @@
 /* istanbul ignore file */
 
 export const AEC_PROMPT = `
-Detect all visible objects, equipment, safety issues, and facility assets in this construction/AEC image.
-Return a JSON object with an "items" array where each item includes:
+Detect the most relevant objects, equipment, safety issues, and facility assets in this construction/AEC image.
+Return a compact JSON object with an "items" array where each item includes:
 - "label": descriptive text label
 - "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized 0-1000
-- "mask": optional base64-encoded PNG segmentation mask
+- "mask": optional base64-encoded PNG segmentation mask when segmentation data is available
 - "points": optional array of key points as [y, x] pairs normalized 0-1000
 - "category": one of "object", "safety_issue", "facility_asset", "progress"
 - "confidence": 0-1 confidence score
 
-Include boxes, masks, and points when available. Limit to 25 items. Output ONLY JSON, no prose, no code fences.
+Return at most 25 items, prioritizing the highest-confidence detections. Only include masks or points when the model provides them. Output ONLY JSON, no prose, no code fences.
 `.trim();
 
 export const RESPONSE_SCHEMA = {

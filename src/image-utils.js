@@ -1,7 +1,7 @@
 export const IMAGE_PREPROCESS_DEFAULTS = Object.freeze({
-	targetShortSide: 960,
-	minShortSide: 720,
-	maxLongSide: 1600,
+	targetShortSide: 640,
+	minShortSide: 512,
+	maxLongSide: 1280,
 	tileSize: 768,
 	outputFormat: 'image/webp',
 	quality: 0.85,

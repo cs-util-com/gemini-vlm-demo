@@ -578,22 +578,13 @@ async function callGeminiREST({ apiKey, model, file }) {
 		{ text: AEC_PROMPT }
 	];
 
-	// Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
-	// For spatial understanding, disable thinking (gemini-2.5-flash recommendation)
-	const snake = {
-		contents: [{ parts }],
-		generationConfig: {
-			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA,
-			thinking_config: { thinking_budget: 0 }
-		}
-	};
-	const camel = {
+	const requestBody = {
 		contents: [{ parts }],
 		generationConfig: {
 			responseMimeType: "application/json",
 			responseSchema: RESPONSE_SCHEMA,
-			thinkingConfig: { thinkingBudget: 0 }
+			thinkingConfig: { thinkingBudget: 0 },
+			maxOutputTokens: 4096,
 		}
 	};
 
@@ -616,18 +607,11 @@ async function callGeminiREST({ apiKey, model, file }) {
 	}
 
 	try {
-		const data = await post(snake);
+		const data = await post(requestBody);
 		return { data, preprocess };
-	} catch (e1) {
-		// Retry with camelCase schema fields if the first fails
-		try {
-			const data = await post(camel);
-			return { data, preprocess };
-		} catch (e2) {
-			const err = new Error(`Gemini call failed.\nFirst: ${e1.message}\nThen: ${e2.message}`);
-			err.preprocess = preprocess;
-			throw err;
-		}
+	} catch (err) {
+		err.preprocess = preprocess;
+		throw err;
 	}
 }
 

@@ -17,8 +17,15 @@ describe('computeResizeDimensions', () => {
 	test('downscales large images to keep short side near target', () => {
 		const result = computeResizeDimensions(4000, 3000);
 		expect(result.resized).toBe(true);
-		expect(result.width).toBe(1280);
-		expect(result.height).toBe(960);
+		const expectedScale = Math.min(
+			IMAGE_PREPROCESS_DEFAULTS.targetShortSide / 3000,
+			IMAGE_PREPROCESS_DEFAULTS.maxLongSide / 4000,
+			1
+		);
+		const minScale = IMAGE_PREPROCESS_DEFAULTS.minShortSide / 3000;
+		const scale = Math.min(1, Math.max(expectedScale, minScale));
+		expect(result.width).toBe(Math.round(4000 * scale));
+		expect(result.height).toBe(Math.round(3000 * scale));
 		expect(result.strategy).toBe('downscale-dual-axis');
 	});
 
@@ -26,14 +33,21 @@ describe('computeResizeDimensions', () => {
 		const result = computeResizeDimensions(5000, 900);
 		expect(result.resized).toBe(true);
 		expect(result.height).toBeGreaterThanOrEqual(IMAGE_PREPROCESS_DEFAULTS.minShortSide);
-		expect(result.strategy).toBe('downscale-long-side');
+		expect(result.strategy).toBe('downscale-dual-axis');
 	});
 
 	test('handles extremely large dimensions gracefully', () => {
 		const result = computeResizeDimensions(8000, 6000);
 		expect(result.resized).toBe(true);
-		expect(result.width).toBe(1280);
-		expect(result.height).toBe(960);
+		const expectedScale = Math.min(
+			IMAGE_PREPROCESS_DEFAULTS.targetShortSide / 6000,
+			IMAGE_PREPROCESS_DEFAULTS.maxLongSide / 8000,
+			1
+		);
+		const minScale = IMAGE_PREPROCESS_DEFAULTS.minShortSide / 6000;
+		const scale = Math.min(1, Math.max(expectedScale, minScale));
+		expect(result.width).toBe(Math.round(8000 * scale));
+		expect(result.height).toBe(Math.round(6000 * scale));
 	});
 
 	test('returns no-op when input is below minimum short side', () => {
@@ -42,6 +56,18 @@ describe('computeResizeDimensions', () => {
 		expect(result.strategy).toBe('no-op-small-input');
 		expect(result.width).toBe(640);
 		expect(result.height).toBe(480);
+	});
+
+	test('downscales long dimension while preserving short side when possible', () => {
+		const result = computeResizeDimensions(2200, 600);
+		expect(result.resized).toBe(true);
+		expect(result.strategy).toBe('downscale-long-side');
+		const baseScale = IMAGE_PREPROCESS_DEFAULTS.maxLongSide / 2200;
+		const minScale = IMAGE_PREPROCESS_DEFAULTS.minShortSide / 600;
+		const scale = Math.min(1, Math.max(baseScale, minScale));
+		expect(result.width).toBe(Math.round(2200 * scale));
+		expect(result.height).toBe(Math.round(600 * scale));
+		expect(result.height).toBe(IMAGE_PREPROCESS_DEFAULTS.minShortSide);
 	});
 
 	test('throws when width is invalid', () => {
@@ -114,10 +140,11 @@ describe('downscaleImageForGemini', () => {
 
 		const file = new File([new Uint8Array(1024)], 'photo.jpg', { type: 'image/jpeg' });
 		const result = await downscaleImageForGemini(file, { preferSmallerBytes: false });
+		const dims = computeResizeDimensions(4000, 3000);
 
 		expect(result.resized).toBe(true);
-		expect(result.targetWidth).toBe(1280);
-		expect(result.targetHeight).toBe(960);
+		expect(result.targetWidth).toBe(dims.width);
+		expect(result.targetHeight).toBe(dims.height);
 		expect(result.mimeType).toBe('image/webp');
 		expect(result.footprint.totalTiles).toBeGreaterThan(0);
 		expect(result.warnings).toBeInstanceOf(Array);
@@ -168,9 +195,11 @@ describe('downscaleImageForGemini', () => {
 
 		const file = new File([new Uint8Array(1024)], 'wide.jpg', { type: 'image/jpeg' });
 		const result = await downscaleImageForGemini(file);
+		const dims = computeResizeDimensions(6000, 900);
 
 		expect(result.resized).toBe(true);
-		expect(result.targetWidth).toBeGreaterThan(3000);
+		expect(result.targetWidth).toBe(dims.width);
+		expect(result.targetHeight).toBe(dims.height);
 		expect(result.footprint.totalTiles).toBeGreaterThan(4);
 		expect(result.warnings.some(w => /cropping/i.test(w))).toBe(true);
 	});
