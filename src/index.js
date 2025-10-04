@@ -57,6 +57,7 @@ const CONCURRENCY_LIMIT = 10;
 let currentSession = null;
 let currentImageIndex = 0;
 let imageBitmaps = {}; // Store bitmaps by imageId
+const maskCanvasCache = new Map(); // Cache tinted segmentation mask canvases per detection
 let naturalW = 0, naturalH = 0;
 let highlightedDetectionId = null;
 let isAnalyzing = false;
@@ -109,6 +110,7 @@ function drawOverlays() {
 		const d = detections[idx];
 		const isHighlighted = highlightedDetectionId === d.id;
 		const color = colorForCategory(d.category);
+		const maskColor = segmentationColors[idx % segmentationColors.length];
 		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
 
 		// Draw with extra emphasis if highlighted
@@ -132,7 +134,8 @@ function drawOverlays() {
 				canvas.height
 			);
 			if (b) {
-				drawMask(d.mask, b, segmentationColors[idx % segmentationColors.length]);
+				const cacheKey = `${imageId}:${d.id ?? `mask-${idx}`}:${maskColor.join(',')}`;
+				drawMask(d.mask, b, maskColor, cacheKey);
 			}
 		}
 
@@ -381,69 +384,142 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
-function drawMask(maskDataUrl, boundingBox, rgbColor) {
-	// maskDataUrl is a base64-encoded PNG (data URL)
-	if (!maskDataUrl || !boundingBox) return;
-	
-	const img = new Image();
-	img.onload = () => {
-		// Create an off-screen canvas to process the mask
-		const tempCanvas = document.createElement('canvas');
-		tempCanvas.width = img.width;
-		tempCanvas.height = img.height;
-		const tempCtx = tempCanvas.getContext('2d');
-		
-		// Draw the mask
-		tempCtx.drawImage(img, 0, 0);
-		
-		// Get pixel data
-		const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
-		const data = imageData.data;
-		
-		// Replace grayscale mask with color + alpha
-		// The mask comes as grayscale where white = opaque, black = transparent
-		for (let i = 0; i < data.length; i += 4) {
-			const alpha = data[i]; // Use red channel as alpha (grayscale)
-			data[i] = rgbColor[0];     // R
-			data[i + 1] = rgbColor[1]; // G
-			data[i + 2] = rgbColor[2]; // B
-			data[i + 3] = alpha;       // A
-		}
-		
-		tempCtx.putImageData(imageData, 0, 0);
-		
-		// Draw the colored mask onto the main canvas with transparency
-		ctx.save();
-		ctx.globalAlpha = 0.5;
-		ctx.drawImage(
-			tempCanvas,
-			boundingBox.x,
-			boundingBox.y,
-			boundingBox.width,
-			boundingBox.height
-		);
-		ctx.restore();
-	};
-	img.onerror = () => {
-		console.warn('Failed to load segmentation mask image', {
-			sourcePreview: typeof maskDataUrl === 'string' ? maskDataUrl.slice(0, 32) : maskDataUrl,
-			boundingBox
-		});
-	};
-	
-	const maskSource = typeof maskDataUrl === 'string' ? maskDataUrl.trim() : '';
-	const isLikelyBase64 = maskSource.length >= 32
-		&& /^[A-Za-z0-9+/=\s]+$/.test(maskSource)
-		&& maskSource.replace(/\s+/g, '').length % 4 === 0;
+function drawMask(maskSource, boundingBox, rgbColor, cacheKey) {
+	if (!maskSource || !boundingBox) return;
 
-	// Handle both data URLs, regular URLs, and plain base64 payloads
-	if (maskSource.startsWith('data:')) {
-		img.src = maskSource;
-	} else if (!isLikelyBase64 && maskSource.length > 0) {
-		img.src = maskSource;
-	} else {
-		img.src = `data:image/png;base64,${maskSource}`;
+	const key = cacheKey || maskSource;
+	const cached = maskCanvasCache.get(key);
+
+	if (cached instanceof HTMLCanvasElement) {
+		renderMaskCanvas(cached, boundingBox);
+		return;
 	}
+
+	if (cached && typeof cached.then === 'function') {
+		cached.then(canvas => {
+			if (canvas instanceof HTMLCanvasElement) {
+				renderMaskCanvas(canvas, boundingBox);
+			}
+		}).catch(() => {
+			maskCanvasCache.delete(key);
+		});
+		return;
+	}
+
+	const loadPromise = loadTintedMaskCanvas(maskSource, rgbColor)
+		.then(canvas => {
+			if (canvas && key) {
+				maskCanvasCache.set(key, canvas);
+				renderMaskCanvas(canvas, boundingBox);
+				requestAnimationFrame(() => drawOverlays());
+			}
+			return canvas;
+		})
+		.catch(err => {
+			maskCanvasCache.delete(key);
+			console.warn('Failed to render segmentation mask image', {
+				error: err?.message,
+				sourcePreview: typeof maskSource === 'string' ? maskSource.slice(0, 48) : maskSource,
+				boundingBox
+			});
+			return null;
+		});
+
+	maskCanvasCache.set(key, loadPromise);
+}
+
+function loadTintedMaskCanvas(maskSource, rgbColor) {
+	const resolvedSrc = normalizeMaskSource(maskSource);
+	if (!resolvedSrc) {
+		return Promise.resolve(null);
+	}
+
+	return new Promise((resolve, reject) => {
+		const img = new Image();
+		img.crossOrigin = 'anonymous';
+		img.decoding = 'async';
+		img.onload = () => {
+			try {
+				const canvas = createTintedMaskCanvas(img, rgbColor);
+				resolve(canvas);
+			} catch (err) {
+				reject(err);
+			}
+		};
+		img.onerror = () => reject(new Error('Mask image failed to load'));
+		img.src = resolvedSrc;
+	});
+}
+
+function createTintedMaskCanvas(image, rgbColor) {
+	const width = image.width;
+	const height = image.height;
+	if (!width || !height) return null;
+
+	const tempCanvas = document.createElement('canvas');
+	tempCanvas.width = width;
+	tempCanvas.height = height;
+	const tempCtx = tempCanvas.getContext('2d');
+	if (!tempCtx) return null;
+
+	tempCtx.imageSmoothingEnabled = false;
+	tempCtx.clearRect(0, 0, width, height);
+	tempCtx.drawImage(image, 0, 0);
+
+	let tinted = false;
+	try {
+		const imageData = tempCtx.getImageData(0, 0, width, height);
+		const data = imageData.data;
+		for (let i = 0; i < data.length; i += 4) {
+			const alpha = data[i];
+			data[i] = rgbColor[0];
+			data[i + 1] = rgbColor[1];
+			data[i + 2] = rgbColor[2];
+			data[i + 3] = alpha;
+		}
+		tempCtx.putImageData(imageData, 0, 0);
+		tinted = true;
+	} catch (err) {
+		// Likely a cross-origin image; fall through to composite-based tinting
+	}
+
+	if (!tinted) {
+		tempCtx.globalCompositeOperation = 'source-in';
+		tempCtx.fillStyle = `rgba(${rgbColor[0]}, ${rgbColor[1]}, ${rgbColor[2]}, 1)`;
+		tempCtx.fillRect(0, 0, width, height);
+		tempCtx.globalCompositeOperation = 'source-over';
+	}
+
+	return tempCanvas;
+}
+
+function renderMaskCanvas(sourceCanvas, boundingBox) {
+	if (!sourceCanvas || !boundingBox) return;
+	ctx.save();
+	ctx.globalAlpha = 0.55;
+	ctx.imageSmoothingEnabled = false;
+	ctx.drawImage(
+		sourceCanvas,
+		boundingBox.x,
+		boundingBox.y,
+		boundingBox.width,
+		boundingBox.height
+	);
+	ctx.restore();
+}
+
+function normalizeMaskSource(maskSource) {
+	if (typeof maskSource !== 'string') return null;
+	const trimmed = maskSource.trim();
+	if (!trimmed) return null;
+	if (trimmed.startsWith('data:')) return trimmed;
+	if (/^https?:\/\//i.test(trimmed)) return trimmed;
+	const sanitized = trimmed.replace(/\s+/g, '');
+	const base64Pattern = /^[A-Za-z0-9+/=_-]+$/;
+	if (sanitized.length >= 32 && base64Pattern.test(sanitized) && sanitized.length % 4 === 0) {
+		return `data:image/png;base64,${sanitized}`;
+	}
+	return trimmed;
 }
 
 function drawPoints(points, coordSystem, scaleX, scaleY, imgW, imgH, origin, label, color) {
@@ -583,6 +659,7 @@ async function analyzeImageBatch(files) {
 	clearReport();
 	imageBitmaps = {};
 	currentImageIndex = 0;
+	maskCanvasCache.clear();
 
 	// Create session
 	currentSession = createSession(files);
