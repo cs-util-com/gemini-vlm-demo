@@ -1,7 +1,7 @@
 # Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Pro)
 
 **Status:** v2 with Multi-Image Support
-**Default model:** `gemini-2.5-pro`
+**Default model:** `gemini-2.5-flash` (selectable)
 **Scope:** Single-page web demo (no backend) that accepts 1-20 images, processes them in parallel, and provides comprehensive site-wide analysis with session-level reporting and export capabilities.
 
 ---
@@ -13,11 +13,11 @@
 * Provide a minimal, self-contained **vanilla JS** demo that:
 
   * Accepts 1-20 user-supplied images via drag-and-drop or file picker for batch analysis.
-  * Calls **Gemini 2.5 Pro** directly via REST with a **strict structured-output schema**.
+  * Calls **Gemini 2.5** models (Flash by default) directly via REST with a **strict structured-output schema**.
   * Processes multiple images concurrently (10 parallel requests) for efficient batch analysis.
   * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) and **global insights** for each image.
   * Provides **session-level aggregates** across all images with safety issue tracking and detection summaries.
-  * Draws **bounding boxes and polygons** on a `<canvas>` overlay for each image with thumbnail navigation.
+  * Draws **bounding boxes and segmentation masks on a `<canvas>` overlay for each image with thumbnail navigation.
   * Displays interactive reports with session summary and per-image sections.
   * **Exports session data** as CSV and JSON for external analysis.
 * Keep the schema **generic** so new AEC findings can be expressed without changing the app.
@@ -28,7 +28,6 @@
 * No server-side proxy, auth, or key management.
 * No storage of images or keys beyond session. No analytics.
 * No integration with BIM, floor plans, WBS, or scheduling tools (future work).
-* No segmentation masks visualization (future work).
 * No mobile camera capture UI (file input only).
 * No localStorage session persistence (sessions are ephemeral).
 
@@ -66,7 +65,7 @@
 
   * Drag-and-drop/file input → render image on `<canvas>`.
   * REST call to Gemini 2.5 Pro using **structured output** (`response_mime_type` + `response_schema`).
-  * Draw returned **bounding boxes/polygons**.
+  * Draw returned **bounding boxes/segmentation masks**.
   * Render full JSON in a `<pre>` block.
 
 ### 3.2 Rationale
@@ -90,12 +89,12 @@
 
   * Password field for **API key** (memory only; not persisted).
   * Model dropdown (defaults to `gemini-2.5-pro`; also lists `gemini-2.5-flash` and `…-flash-lite`).
-  * Buttons: “Choose image…”, “Analyze”.
+  * Buttons: “Choose image…”. Analysis starts automatically after files are selected.
   * Note indicating “Prototype only. Key is not stored.”
 * **Body**
 
   * **Dropzone** (drag-and-drop with highlight on drag).
-  * **Canvas** to show the image and overlays.
+  * **Canvas** to show the image and overlays (boxes, masks).
   * **Interactive Report** panel displaying structured findings in collapsible sections.
   * **JSON panel** showing the raw response.
 
@@ -110,8 +109,8 @@
   * **Global Insights** for whole-image observations
   * **Summary Statistics** with bar chart visualizations (calculated client-side)
   * All sections are independently collapsible via headers
-* **Hover interactions**: Hovering over detection cards highlights their corresponding bounding box/polygon on the canvas with glow effect
-* Boxes/polygons are color-coded by category:
+* **Hover interactions**: Hovering over detection cards highlights their corresponding overlay (box, mask) on the canvas with glow effect
+* Boxes are color-coded by category:
   * `object` → yellow
   * `facility_asset` → cyan
   * `safety_issue` → red
@@ -135,52 +134,45 @@
 
 * `"normalized_0_1000"` → normalized coordinates [0..1000] (converted to pixels in the renderer).
 
+The model returns a compact envelope with an `items` array for per-detection details and an optional `global_insights` array for whole-image observations. Every detection carries a `labels` array ordered from most specific → most general; the first value becomes the canonical label in the UI.
+
 ```json
 {
   "type": "object",
   "properties": {
-    "image": {
-      "type": "object",
-      "properties": {
-        "width": { "type": "number", "nullable": true },
-        "height": { "type": "number", "nullable": true },
-        "fileName": { "type": "string", "nullable": true },
-        "coordSystem": { "type": "string", "enum": ["normalized_0_1000"], "nullable": true, "description": "Always normalized_0_1000" }
-      },
-      "nullable": true
-    },
-    "detections": {
+    "items": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "label": { "type": "string" },
-          "category": { "type": "string", "enum": ["object", "facility_asset", "safety_issue", "progress", "other"] },
+          "labels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Ordered list of labels from most specific to most general"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["object", "facility_asset", "safety_issue", "progress"]
+          },
           "confidence": { "type": "number" },
-          "bbox": {
+          "box_2d": {
             "type": "array",
             "items": { "type": "number" },
             "minItems": 4,
             "maxItems": 4,
-            "description": "[ymin, xmin, ymax, xmax] normalized 0-1000",
-            "nullable": true
+            "description": "[ymin, xmin, ymax, xmax] normalized 0-1000"
           },
-          "polygon": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
-              "required": ["x", "y"]
-            },
-            "description": "Array of {x,y} points, each normalized 0-1000",
+          "mask": {
+            "type": "string",
+            "description": "Optional base64/URL for a segmentation mask aligned to the bbox",
             "nullable": true
           },
           "safety": {
             "type": "object",
             "properties": {
               "isViolation": { "type": "boolean", "nullable": true },
-              "severity": { "type": "string", "enum": ["low", "medium", "high"], "nullable": true },
+              "severity": { "type": "string", "nullable": true },
               "rule": { "type": "string", "nullable": true }
             },
             "nullable": true
@@ -209,18 +201,20 @@
             },
             "nullable": true
           },
-          "useCaseTags": { "type": "array", "items": { "type": "string" }, "nullable": true },
           "relationships": {
             "type": "array",
             "items": {
               "type": "object",
-              "properties": { "type": { "type": "string" }, "targetId": { "type": "string" } },
+              "properties": {
+                "type": { "type": "string" },
+                "targetId": { "type": "string" }
+              },
               "required": ["type", "targetId"]
             },
             "nullable": true
           }
         },
-        "required": ["id", "label", "category", "confidence"]
+        "required": ["labels", "category", "confidence", "box_2d"]
       }
     },
     "global_insights": {
@@ -228,76 +222,68 @@
       "items": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "category": { "type": "string", "enum": ["progress", "safety_issue", "facility_asset", "object", "other"] },
+          "labels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": ["progress", "safety_issue", "facility_asset", "object", "other"]
+          },
           "description": { "type": "string" },
           "confidence": { "type": "number" },
           "metrics": {
             "type": "array",
             "items": {
               "type": "object",
-              "properties": { "key": { "type": "string" }, "value": { "type": "number" }, "unit": { "type": "string", "nullable": true } },
+              "properties": {
+                "key": { "type": "string" },
+                "value": { "type": "number" },
+                "unit": { "type": "string", "nullable": true }
+              },
               "required": ["key", "value"]
-            },
-            "nullable": true
-          },
-          "relatedDetectionIds": { "type": "array", "items": { "type": "string" }, "nullable": true },
-          "region": {
-            "type": "object",
-            "properties": {
-              "bbox": {
-                "type": "object",
-                "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "width": { "type": "number" }, "height": { "type": "number" } },
-                "required": ["x", "y", "width", "height"],
-                "nullable": true
-              }
             },
             "nullable": true
           }
         },
-        "required": ["name", "category", "description", "confidence"]
-      }
+        "required": ["labels", "category", "description", "confidence"]
+      },
+      "nullable": true
     }
   },
-  "required": ["detections", "global_insights"]
+  "required": ["items"]
 }
 ```
 
-**Note:** The `aggregates` object has been removed from the schema. Counts by label and category are now calculated client-side from the detections array to prevent hallucination of statistics.
+**Notes:**
+
+* Masks are optional—omit `mask` when segmentation is uncertain. Polygon/keypoint payloads are intentionally excluded.
+* When Gemini returns auxiliary mask blobs (`mask_assets`, `maskResources`, etc.), the client consolidates them but they remain optional.
+* Session aggregates are still calculated client-side; the schema stays lean to reduce hallucination surface area.
 
 ### 5.2 Prompt (model instruction)
 
-Short text prompt accompanying the image:
+Short text prompt accompanying each image:
 
 ```
-You are an AEC computer-vision assistant.
-Return findings strictly matching the provided response schema across FOUR categories:
-1) General objects (e.g., ladder, scaffold, duct, rebar, crane hook).
-2) Facility assets (e.g., exit sign, fire extinguisher, panel/valve).
-3) Safety issues (e.g., missing PPE, unguarded edge, ladder angle > 75°, blocked exit).
-4) Progress/scene insights (e.g., "drywall phase ~70%", "MEP rough-in present", "finishes started").
+Detect the most relevant objects, equipment, safety issues, facility assets, and progress indicators in this construction/AEC image.
+Return a JSON object with an "items" array (maximum 20 entries). Each item must include:
+- "labels": array of strings ordered from most specific to most general (e.g., ["bag of cement from Company X", "cement", "building material"]). Always include at least one label.
+- "category": one of "object", "facility_asset", "safety_issue", "progress" (use the best fit for the detection).
+- "confidence": detection confidence between 0 and 1.
+- "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized 0-1000 with a top-left origin.
+- "mask": optional base64-encoded PNG segmentation mask aligned to the same region (omit when unavailable).
+- Optional context objects when relevant:
+  - "safety": { "isViolation": boolean?, "severity": "low"|"medium"|"high"?, "rule": string? }
+  - "progress": { "phase": string?, "percentComplete": number?, "notes": string? }
+  - "attributes": array of { "name": string, "valueStr"?: string, "valueNum"?: number, "valueBool"?: boolean, "unit"?: string }
+  - "relationships": array of { "type": string, "targetId": string }
 
-Geometry:
-- Use bbox as [ymin, xmin, ymax, xmax] array, normalized 0-1000, top-left origin, when localizable.
-- Use polygon only when a box would be misleading (each point {x,y} normalized 0-1000).
-- For whole-image findings (e.g., overall progress), use no geometry under detections (prefer global_insights).
-
-Safety:
-- For safety items, set category: "safety_issue" and fill safety.{isViolation, severity, rule}.
-
-Progress:
-- For per-region progress, set category: "progress" and fill progress.{phase, percentComplete, notes}.
-- For overall progress, prefer global_insights (no geometry).
-
-Attributes:
-- Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
-
-Coordinates:
-- Set image.coordSystem explicitly to "normalized_0_1000" (Google's 0..1000 normalization).
-Be conservative with confidence. Output ONLY JSON (no prose).
+Do not return polygons or keypoints. Use the labels array for both specific names and broader searchable terms instead of separate name/description fields. Include an optional "global_insights" array for whole-image observations following the same labeling approach (labels array, category, confidence, description, optional metrics). Output ONLY JSON with no prose or code fences.
 ```
 
-**Note:** Aggregates (counts by label/category) are calculated **client-side** to prevent LLM hallucination of statistics.
+**Note:** The client transforms this schema into the legacy `detections`/`global_insights` format internally for display and exports.
 
 ---
 
@@ -322,18 +308,19 @@ Content-Type: application/json
     ]
   }],
   "generationConfig": {
-    "response_mime_type": "application/json",
-    "response_schema": { ...see schema above... }
+    "responseMimeType": "application/json",
+    "responseSchema": { ...see schema above... },
+    "thinkingConfig": { "thinkingBudget": 0 },
+    "maxOutputTokens": 1024
   }
 }
 ```
-
-> Note: Implementation tries snake_case first (`response_mime_type`/`response_schema`), then retries with camelCase if needed (`responseMimeType`/`responseSchema`).
 
 ### 6.3 Response Handling
 
 * Expect JSON as a **single text part** in `candidates[0].content.parts[0].text`.
 * Parse JSON; if surrounded by backticks (rare), strip before parsing.
+* `thinkingBudget` is forced to `0` and `maxOutputTokens` is capped to keep latency predictable.
 * On HTTP error, surface `error.message` when available.
 
 ---
@@ -352,7 +339,7 @@ The report is organized into independently collapsible sections:
    * Displays safety violations in a grid of cards
    * Color-coded by severity: High (red), Medium (orange), Low (yellow)
    * Shows: label, severity badge, rule violated, confidence
-   * Hover highlights the corresponding bounding box on canvas
+  * Hover highlights the corresponding overlay on canvas
 
 2. **📊 Progress** (collapsed by default)
    * **Regional Progress**: Progress bars for localized detections with `category: "progress"`
@@ -363,7 +350,7 @@ The report is organized into independently collapsible sections:
    * Grid of cards for every detection
    * Category color-coding (left border): object (yellow), facility_asset (cyan), safety_issue (red), progress (green)
    * Shows: label, confidence, category badge, custom attributes
-   * Hover highlights the corresponding bounding box/polygon on canvas
+   * Hover highlights the corresponding bounding box/segmentations on canvas
 
 4. **💡 Global Insights** (collapsed by default)
    * Cards for whole-image observations (non-progress)
@@ -379,7 +366,7 @@ The report is organized into independently collapsible sections:
 
 ### 7.3 Interactive Features
 
-* **Hover to Highlight**: Mousing over any detection card highlights its bounding box/polygon on the canvas with a glow effect
+* **Hover to Highlight**: Mousing over any detection card highlights its overlay (box, segmentation mask) on the canvas with a glow effect
 * **Collapsible Sections**: Click any section header to expand/collapse
 * **Visual Feedback**: Highlighted cards get border color change and subtle elevation
 
@@ -410,16 +397,17 @@ The report is organized into independently collapsible sections:
   * Then convert to `{x, y, width, height}` format and scale to canvas dimensions.
 * The unified schema enforces `coordSystem: "normalized_0_1000"`, so all box math assumes that normalized range.
 
-### 8.3 Polygons
-
-* Convert each `{x,y}` similarly.
-* Require at least 3 points before drawing; close the path.
-
 ### 8.4 Labels
 
 * Draw a small dark rectangle above the shape with white text:
 
   * `"{label} (NN%)"` when confidence is numeric.
+
+### 8.5 Segmentation Masks
+
+* Masks arrive as PNG data (data URL or base64) aligned to the detection's bounding box.
+* Each mask is tinted with a category-specific palette and cached for reuse to avoid blocking redraws.
+* Render masks before boxes with ~0.5 alpha to keep underlying imagery visible.
 
 ---
 
@@ -447,9 +435,10 @@ The report is organized into independently collapsible sections:
 ## 11) Performance
 
 * Scale image to viewport width for display; keep internal dimensions for accurate math.
+* Preprocess uploads to a ~640 px short side (max long side 1280 px) before sending to Gemini to reduce latency.
 * Avoid unnecessary re-draws (base image is re-drawn once before overlaying).
 * No external libraries; minimal DOM updates.
-* Large images can be downscaled client-side before sending (future enhancement).
+* For unusually large assets, consider cropping or using the Files API in a future iteration.
 
 ---
 
@@ -462,9 +451,6 @@ The report is organized into independently collapsible sections:
 * **Coordinate conversion**
 
   * Given `normalized_0_1000` bbox and known `naturalW/H`, verify pixel conversion.
-* **Polygon conversion**
-
-  * Convert known 3-point polygon in both coord systems; verify resulting screen points.
 * **Label formatting**
 
   * Confidence rounding and truncation for long labels.
@@ -568,7 +554,7 @@ The report is organized into independently collapsible sections:
 ## 19) Open Questions
 
 1. **Default thresholds:** Should a UI control hide detections below a confidence threshold (e.g., < 0.4)?
-2. **Polygon usage:** In v1, keep polygons optional—should the prompt steer strongly towards **bbox first** to reduce UI complexity?
+2. **Mask guidance:** Now that polygons/keypoints are out of scope, should we add extra prompt tuning or UI affordances to encourage high-quality masks while keeping bboxes as the guaranteed fallback?
 3. **Label taxonomy:** Remain fully freeform, or add light guidance for common facility assets (e.g., “exit sign”, “fire extinguisher”) to improve consistency across runs?
 4. **Safety rules catalog:** Provide a short, curated list of common safety rules to encourage consistent `safety.rule` strings (e.g., PPE categories, ladder angle rule)?
 5. **Download artifacts:** Add “Download JSON” and “Download annotated PNG” buttons?

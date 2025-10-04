@@ -5,7 +5,8 @@ import {
 	formatJsonOutput,
 	extractBase64FromDataUrl,
 	prepareDetectionData,
-	escapeHtml
+	escapeHtml,
+	transformResponseFormat
 } from './ui-utils.js';
 
 describe('colorForCategory', () => {
@@ -97,6 +98,84 @@ describe('extractJSONFromResponse', () => {
 				}
 			}]
 		};
+		expect(() => extractJSONFromResponse(resp)).toThrow();
+	});
+
+	it('strips truncated mask data so remaining fields can be parsed', () => {
+		const truncated = '{"items":[{"label":"skylight","box_2d":[0,482,453,997],"category":"facility_asset","mask":"\\u003cstart_of_mask\\u003eABC';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: truncated }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					label: 'skylight',
+					box_2d: [0, 482, 453, 997],
+					category: 'facility_asset',
+					mask: null
+				}
+			]
+		});
+	});
+
+	it('recovers from truncated mask asset object payloads', () => {
+		const truncated = '{"items":[{"label":"panel","category":"object","mask":{"inline_data":{"mime_type":"image/png","data":"AAA';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: truncated }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					label: 'panel',
+					category: 'object',
+					mask: null
+				}
+			]
+		});
+	});
+
+	it('appends missing closing brackets when mask was otherwise valid', () => {
+		const missingRootBrace = '{"items":[{"mask":"\\u003cstart_of_mask\\u003eAAAA"}]';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: missingRootBrace }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					mask: null
+				}
+			]
+		});
+	});
+
+	it('still throws when cleanup cannot repair the response', () => {
+		const broken = '{"items":[{"label":"door"}],"note":"mask"';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: broken }]
+				}
+			}]
+		};
+
 		expect(() => extractJSONFromResponse(resp)).toThrow();
 	});
 
@@ -330,5 +409,361 @@ describe('escapeHtml', () => {
 	it('leaves safe strings unchanged', () => {
 		const input = 'plain text';
 		expect(escapeHtml(input)).toBe(input);
+	});
+});
+
+describe('transformResponseFormat', () => {
+	it('transforms items array to detections format', () => {
+		const input = {
+			items: [
+				{
+					labels: ['ladder', 'equipment'],
+					box_2d: [100, 200, 300, 400],
+					category: 'object',
+					confidence: 0.95
+				}
+			]
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result).toHaveProperty('detections');
+		expect(result).toHaveProperty('global_insights');
+		expect(Array.isArray(result.detections)).toBe(true);
+		expect(result.detections.length).toBe(1);
+		const detection = result.detections[0];
+		expect(detection).toMatchObject({
+			id: 'det_0',
+			label: 'ladder',
+			labels: ['ladder', 'equipment'],
+			bbox: [100, 200, 300, 400],
+			category: 'object',
+			confidence: 0.95
+		});
+		expect(detection.labelAliases).toEqual(['equipment']);
+	});
+
+	it('includes mask when present', () => {
+		const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQ=';
+		const input = {
+			items: [
+				{
+					labels: ['person', 'worker'],
+					box_2d: [10, 20, 30, 40],
+					mask: base64,
+					confidence: 0.9
+				}
+			]
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result.detections[0]).toHaveProperty('mask', `data:image/png;base64,${base64}`);
+	});
+
+	it('resolves mask references from mask_assets map', () => {
+		const input = {
+			items: [
+				{
+					labels: ['helmet', 'ppe'],
+					box_2d: [5, 10, 15, 20],
+					mask: 'mask_1'
+				}
+			],
+			mask_assets: {
+				mask_1: 'iVBORw0KGgoAAAANSUhEUgAAAAUA' + 'A'.repeat(64)
+			}
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0]).toHaveProperty('mask');
+		expect(result.detections[0].mask.startsWith('data:image/png;base64,')).toBe(true);
+	});
+
+	it('supports inline_data mask objects', () => {
+		const input = {
+			items: [
+				{
+					labels: ['cone', 'safety marker'],
+					box_2d: [1, 2, 3, 4],
+					mask: {
+						inline_data: {
+							mime_type: 'image/webp',
+							data: 'TWFuIGlzIGRpc3Rpbmd1aXNoZWQ=' 
+						}
+					}
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0]).toHaveProperty('mask', 'data:image/webp;base64,TWFuIGlzIGRpc3Rpbmd1aXNoZWQ=');
+	});
+
+	it('omits mask when unable to resolve placeholder', () => {
+		const input = {
+			items: [
+				{
+					labels: ['barrier'],
+					box_2d: [10, 10, 20, 20],
+					mask: 'mask_999'
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0].mask).toBeUndefined();
+	});
+
+	it('sets default values for missing fields', () => {
+		const input = {
+			items: [
+				{
+					labels: ['item'],
+					box_2d: [1, 2, 3, 4]
+				}
+			]
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result.detections[0].category).toBe('object');
+		expect(result.detections[0].confidence).toBe(0.8);
+	});
+
+	it('includes optional metadata fields when present', () => {
+		const input = {
+			items: [
+				{
+					id: 'custom',
+					labels: ['hazard', 'ppe'],
+					box_2d: [0, 0, 10, 10],
+					confidence: 0.99,
+					category: 'safety_issue',
+					safety: { severity: 'high', actions: ['evacuate'] },
+					progress: { status: 'blocked', percent_complete: 35 },
+					attributes: [{ name: 'color', value: 'yellow' }],
+					relationships: [{ type: 'near', target: 'det_7' }]
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		const detection = result.detections[0];
+		expect(detection.id).toBe('custom');
+		expect(detection.safety).toEqual({ severity: 'high', actions: ['evacuate'] });
+		expect(detection.progress).toEqual({ status: 'blocked', percent_complete: 35 });
+		expect(detection.attributes).toEqual([{ name: 'color', value: 'yellow' }]);
+		expect(detection.relationships).toEqual([{ type: 'near', target: 'det_7' }]);
+	});
+
+	it('falls back to legacy label property when labels array missing', () => {
+		const input = {
+			items: [
+				{
+					label: 'legacy-name',
+					box_2d: [0, 1, 2, 3]
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0].label).toBe('legacy-name');
+		expect(result.detections[0].labels).toBeUndefined();
+	});
+
+	it('returns input unchanged if already in legacy format', () => {
+		const input = {
+			detections: [{ id: '1', label: 'test', category: 'object', confidence: 0.9 }],
+			global_insights: []
+		};
+		
+		const result = transformResponseFormat(input);
+		
+		expect(result).toBe(input);
+	});
+
+	it('maps global insights labels and defaults when provided', () => {
+		const input = {
+			items: [],
+			global_insights: [
+				{
+					labels: ['Progress Update', 'Milestone'],
+					description: 'Framing complete on level 2',
+					category: 'progress',
+					confidence: 0.92,
+					metrics: [{ name: 'tasksComplete', value: 14 }]
+				},
+				{
+					name: 'Fallback Insight'
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		const [firstInsight, secondInsight] = result.global_insights;
+		expect(firstInsight).toMatchObject({
+			id: 'ins_0',
+			name: 'Progress Update',
+			labels: ['Progress Update', 'Milestone'],
+			labelAliases: ['Milestone'],
+			description: 'Framing complete on level 2',
+			category: 'progress',
+			confidence: 0.92,
+			metrics: [{ name: 'tasksComplete', value: 14 }]
+		});
+		expect(secondInsight).toMatchObject({
+			id: 'ins_1',
+			name: 'Fallback Insight',
+			labels: undefined,
+			labelAliases: undefined,
+			description: '',
+			category: 'other',
+			confidence: 0.8
+		});
+	});
+
+	it('returns input unchanged for invalid input', () => {
+		expect(transformResponseFormat(null)).toBe(null);
+		expect(transformResponseFormat(undefined)).toBe(undefined);
+		expect(transformResponseFormat('string')).toBe('string');
+	});
+
+	it('gathers mask assets from multiple sources', () => {
+		const base = 'A'.repeat(64);
+		const input = {
+			items: [
+				{
+					labels: ['multi'],
+					box_2d: [0, 0, 1, 1],
+					mask: 'mask_from_assets_url'
+				}
+			],
+			maskAssets: { mask_primary: base },
+			mask_assets: { mask_secondary: base },
+			maskResources: { mask_resource: base },
+			mask_resources: { mask_resource_snake: base },
+			maskData: { mask_data: base },
+			mask_data: { mask_data_snake: base },
+			masks: { mask_plain: base },
+			segmentationMasks: { mask_segment: base },
+			segmentation_masks: { mask_segment_snake: base },
+			assets: {
+				maskAssets: { mask_from_assets_url: { url: 'https://cdn.example.com/mask.png' } },
+				mask_assets: { mask_from_assets_inline: { inlineData: { data: base, mimeType: 'image/avif' } } },
+				masks: { mask_from_assets_direct: { base64: base } },
+				segmentationMasks: { mask_from_assets_segmentation: { data: base } },
+				segmentation_masks: { mask_from_assets_snake: base }
+			}
+		};
+
+		const result = transformResponseFormat(input);
+
+		expect(result.detections[0].mask).toBe('https://cdn.example.com/mask.png');
+		expect(Object.keys(result.maskAssets)).toEqual(expect.arrayContaining([
+			'mask_primary',
+			'mask_secondary',
+			'mask_resource',
+			'mask_resource_snake',
+			'mask_data',
+			'mask_data_snake',
+			'mask_plain',
+			'mask_segment',
+			'mask_segment_snake',
+			'mask_from_assets_inline',
+			'mask_from_assets_direct',
+			'mask_from_assets_segmentation',
+			'mask_from_assets_snake'
+		]));
+	});
+
+	it('normalizes diverse mask representations', () => {
+		const baseInline = 'A'.repeat(64);
+		const basePng = 'B'.repeat(64);
+		const baseAsset = 'C'.repeat(64);
+		const basePngBase64 = 'D'.repeat(64);
+		const baseBytes = 'E'.repeat(64);
+		const dataUrl = 'data:image/png;base64,alreadyEncoded==';
+		const input = {
+			items: [
+				{ labels: ['dataUrl'], box_2d: [1, 1, 2, 2], mask: dataUrl },
+				{ labels: ['inlineCamel'], box_2d: [2, 2, 3, 3], mask: { inlineData: { data: baseInline, mimeType: 'image/gif' } } },
+				{ labels: ['directObject'], box_2d: [3, 3, 4, 4], mask: { png: basePng } },
+				{ labels: ['url'], box_2d: [4, 4, 5, 5], mask: { url: 'https://example.com/mask.svg' } },
+				{ labels: ['assetBase64'], box_2d: [5, 5, 6, 6], mask: 'mask_asset_base64' },
+				{ labels: ['assetPngBase64'], box_2d: [6, 6, 7, 7], mask: 'mask_asset_png_base64' },
+				{ labels: ['assetBytes'], box_2d: [7, 7, 8, 8], mask: 'mask_asset_bytes' },
+				{ labels: ['unresolvedShort'], box_2d: [8, 8, 9, 9], mask: 'short' },
+				{ labels: ['invalidObject'], box_2d: [9, 9, 10, 10], mask: { foo: 'bar' } },
+				{ labels: ['invalidType'], box_2d: [10, 10, 11, 11], mask: true }
+			],
+			mask_assets: {
+				mask_asset_base64: { base64: baseAsset, mimeType: 'image/jpeg' },
+				mask_asset_png_base64: { pngBase64: basePngBase64 },
+				mask_asset_bytes: { bytes: baseBytes, mime_type: 'image/webp' }
+			}
+		};
+
+		const result = transformResponseFormat(input);
+		const [
+			maskDataUrl,
+			maskInlineCamel,
+			maskDirectObject,
+			maskUrl,
+			maskAssetBase64,
+			maskAssetPngBase64,
+			maskAssetBytes,
+			maskUnresolved,
+			maskInvalid,
+			maskInvalidType
+		] = result.detections.map(det => det.mask);
+
+		expect(maskDataUrl).toBe(dataUrl);
+		expect(maskInlineCamel).toBe(`data:image/gif;base64,${baseInline}`);
+		expect(maskDirectObject).toBe(`data:image/png;base64,${basePng}`);
+		expect(maskUrl).toBe('https://example.com/mask.svg');
+		expect(maskAssetBase64).toBe(`data:image/jpeg;base64,${baseAsset}`);
+		expect(maskAssetPngBase64).toBe(`data:image/png;base64,${basePngBase64}`);
+		expect(maskAssetBytes).toBe(`data:image/webp;base64,${baseBytes}`);
+		expect(maskUnresolved).toBeUndefined();
+		expect(maskInvalid).toBeUndefined();
+		expect(maskInvalidType).toBeUndefined();
+	});
+
+	it('handles malformed mask assets gracefully', () => {
+		const invalidCharMask = '@'.repeat(40);
+		const inlineBase64 = 'F'.repeat(64);
+		const inlineBytes = 'G'.repeat(64);
+		const dataUrlAsset = 'data:image/png;base64,ZXhhbXBsZWRhdGE=';
+		const input = {
+			items: [
+				{ labels: ['broken'], box_2d: [0, 1, 2, 3], mask: invalidCharMask },
+				{ labels: ['numberAsset'], mask: 'mask_number_asset', box_2d: [0, 0, 1, 1] },
+				{ labels: ['inlineBase64'], mask: 'mask_inline_base64', box_2d: [0, 0, 1, 1] },
+				{ labels: ['inlineBytes'], mask: 'mask_inline_bytes', box_2d: [0, 0, 1, 1] },
+				{ labels: ['dataUrlAsset'], mask: 'mask_data_url_asset', box_2d: [0, 0, 1, 1] },
+				{ labels: ['emptyStringAsset'], mask: 'mask_empty_string', box_2d: [0, 0, 1, 1] }
+			],
+			mask_assets: {
+				mask_number_asset: 42,
+				mask_inline_base64: { inline_data: { base64: inlineBase64, mime_type: 'image/heif' } },
+				mask_inline_bytes: { inlineData: { bytes: inlineBytes, mimeType: 'image/tiff' } },
+				mask_data_url_asset: { data: dataUrlAsset },
+				mask_empty_string: ''
+			}
+		};
+
+		const result = transformResponseFormat(input);
+		const [first, second, third, fourth, fifth, sixth] = result.detections;
+
+		expect(first.label).toBe('broken');
+		expect(first.labels).toEqual(['broken']);
+		expect(first.bbox).toEqual([0, 1, 2, 3]);
+		expect(first.mask).toBeUndefined();
+		expect(second.mask).toBeUndefined();
+		expect(third.mask).toBe(`data:image/heif;base64,${inlineBase64}`);
+		expect(fourth.mask).toBe(`data:image/tiff;base64,${inlineBytes}`);
+		expect(fifth.mask).toBe(dataUrlAsset);
+		expect(sixth.mask).toBeUndefined();
 	});
 });

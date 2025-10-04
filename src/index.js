@@ -14,7 +14,8 @@ import {
 	formatJsonOutput,
 	extractBase64FromDataUrl,
 	prepareDetectionData,
-	escapeHtml
+	escapeHtml,
+	transformResponseFormat
 } from './ui-utils.js';
 import { downscaleImageForGemini } from './image-utils.js';
 import {
@@ -56,6 +57,7 @@ const CONCURRENCY_LIMIT = 10;
 let currentSession = null;
 let currentImageIndex = 0;
 let imageBitmaps = {}; // Store bitmaps by imageId
+const maskCanvasCache = new Map(); // Cache tinted segmentation mask canvases per detection
 let naturalW = 0, naturalH = 0;
 let highlightedDetectionId = null;
 let isAnalyzing = false;
@@ -90,9 +92,25 @@ function drawOverlays() {
 	const coordSystem = ensureCoordSystem(result, 'normalized_0_1000');
 	const coordOrigin = ensureCoordOrigin(result, 'top-left');
 
-	for (const d of detections) {
+	// Define color palette for segmentation masks (similar to reference implementation)
+	const segmentationColors = [
+		[230, 25, 75],    // Red
+		[60, 180, 75],    // Green
+		[255, 225, 25],   // Yellow
+		[0, 130, 200],    // Blue
+		[245, 130, 48],   // Orange
+		[145, 30, 180],   // Purple
+		[70, 240, 240],   // Cyan
+		[240, 50, 230],   // Magenta
+		[191, 239, 69],   // Lime
+		[250, 190, 212]   // Pink
+	];
+
+	for (let idx = 0; idx < detections.length; idx++) {
+		const d = detections[idx];
 		const isHighlighted = highlightedDetectionId === d.id;
 		const color = colorForCategory(d.category);
+		const maskColor = segmentationColors[idx % segmentationColors.length];
 		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
 
 		// Draw with extra emphasis if highlighted
@@ -102,6 +120,26 @@ function drawOverlays() {
 			ctx.shadowBlur = 15;
 		}
 
+		// Draw segmentation mask first (as background layer)
+		if (d.mask && d.bbox) {
+			const b = toCanvasBox(
+				d.bbox,
+				coordSystem,
+				scaleX,
+				scaleY,
+				naturalW,
+				naturalH,
+				coordOrigin,
+				canvas.width,
+				canvas.height
+			);
+			if (b) {
+				const cacheKey = `${imageId}:${d.id ?? `mask-${idx}`}:${maskColor.join(',')}`;
+				drawMask(d.mask, b, maskColor, cacheKey);
+			}
+		}
+
+		// Draw bounding box
 		if (d.bbox) {
 			const b = toCanvasBox(
 				d.bbox,
@@ -121,6 +159,8 @@ function drawOverlays() {
 				drawBox(b, label, color);
 			}
 		}
+		
+		// Draw polygon
 		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
 			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
 			if (pts) {
@@ -129,6 +169,11 @@ function drawOverlays() {
 				}
 				drawPolygon(pts, label, color);
 			}
+		}
+
+		// Draw points
+		if (Array.isArray(d.points) && d.points.length > 0) {
+			drawPoints(d.points, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, label, color);
 		}
 
 		if (isHighlighted) {
@@ -339,6 +384,186 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
+function drawMask(maskSource, boundingBox, rgbColor, cacheKey) {
+	if (!maskSource || !boundingBox) return;
+
+	const key = cacheKey || maskSource;
+	const cached = maskCanvasCache.get(key);
+
+	if (cached instanceof HTMLCanvasElement) {
+		renderMaskCanvas(cached, boundingBox);
+		return;
+	}
+
+	if (cached && typeof cached.then === 'function') {
+		cached.then(canvas => {
+			if (canvas instanceof HTMLCanvasElement) {
+				renderMaskCanvas(canvas, boundingBox);
+			}
+		}).catch(() => {
+			maskCanvasCache.delete(key);
+		});
+		return;
+	}
+
+	const loadPromise = loadTintedMaskCanvas(maskSource, rgbColor)
+		.then(canvas => {
+			if (canvas && key) {
+				maskCanvasCache.set(key, canvas);
+				renderMaskCanvas(canvas, boundingBox);
+				requestAnimationFrame(() => drawOverlays());
+			}
+			return canvas;
+		})
+		.catch(err => {
+			maskCanvasCache.delete(key);
+			console.warn('Failed to render segmentation mask image', {
+				error: err?.message,
+				sourcePreview: typeof maskSource === 'string' ? maskSource.slice(0, 48) : maskSource,
+				boundingBox
+			});
+			return null;
+		});
+
+	maskCanvasCache.set(key, loadPromise);
+}
+
+function loadTintedMaskCanvas(maskSource, rgbColor) {
+	const resolvedSrc = normalizeMaskSource(maskSource);
+	if (!resolvedSrc) {
+		return Promise.resolve(null);
+	}
+
+	return new Promise((resolve, reject) => {
+		const img = new Image();
+		img.crossOrigin = 'anonymous';
+		img.decoding = 'async';
+		img.onload = () => {
+			try {
+				const canvas = createTintedMaskCanvas(img, rgbColor);
+				resolve(canvas);
+			} catch (err) {
+				reject(err);
+			}
+		};
+		img.onerror = () => reject(new Error('Mask image failed to load'));
+		img.src = resolvedSrc;
+	});
+}
+
+function createTintedMaskCanvas(image, rgbColor) {
+	const width = image.width;
+	const height = image.height;
+	if (!width || !height) return null;
+
+	const tempCanvas = document.createElement('canvas');
+	tempCanvas.width = width;
+	tempCanvas.height = height;
+	const tempCtx = tempCanvas.getContext('2d');
+	if (!tempCtx) return null;
+
+	tempCtx.imageSmoothingEnabled = false;
+	tempCtx.clearRect(0, 0, width, height);
+	tempCtx.drawImage(image, 0, 0);
+
+	let tinted = false;
+	try {
+		const imageData = tempCtx.getImageData(0, 0, width, height);
+		const data = imageData.data;
+		for (let i = 0; i < data.length; i += 4) {
+			const alpha = data[i];
+			data[i] = rgbColor[0];
+			data[i + 1] = rgbColor[1];
+			data[i + 2] = rgbColor[2];
+			data[i + 3] = alpha;
+		}
+		tempCtx.putImageData(imageData, 0, 0);
+		tinted = true;
+	} catch {
+		// Likely a cross-origin image; fall through to composite-based tinting
+	}
+
+	if (!tinted) {
+		tempCtx.globalCompositeOperation = 'source-in';
+		tempCtx.fillStyle = `rgba(${rgbColor[0]}, ${rgbColor[1]}, ${rgbColor[2]}, 1)`;
+		tempCtx.fillRect(0, 0, width, height);
+		tempCtx.globalCompositeOperation = 'source-over';
+	}
+
+	return tempCanvas;
+}
+
+function renderMaskCanvas(sourceCanvas, boundingBox) {
+	if (!sourceCanvas || !boundingBox) return;
+	ctx.save();
+	ctx.globalAlpha = 0.55;
+	ctx.imageSmoothingEnabled = false;
+	ctx.drawImage(
+		sourceCanvas,
+		boundingBox.x,
+		boundingBox.y,
+		boundingBox.width,
+		boundingBox.height
+	);
+	ctx.restore();
+}
+
+function normalizeMaskSource(maskSource) {
+	if (typeof maskSource !== 'string') return null;
+	const trimmed = maskSource.trim();
+	if (!trimmed) return null;
+	if (trimmed.startsWith('data:')) return trimmed;
+	if (/^https?:\/\//i.test(trimmed)) return trimmed;
+	const sanitized = trimmed.replace(/\s+/g, '');
+	const base64Pattern = /^[A-Za-z0-9+/=_-]+$/;
+	if (sanitized.length >= 32 && base64Pattern.test(sanitized) && sanitized.length % 4 === 0) {
+		return `data:image/png;base64,${sanitized}`;
+	}
+	return trimmed;
+}
+
+function drawPoints(points, coordSystem, scaleX, scaleY, imgW, imgH, origin, label, color) {
+	// Points are in [y, x] format normalized 0-1000
+	if (!Array.isArray(points) || points.length === 0) return;
+	
+	ctx.save();
+	
+	for (let i = 0; i < points.length; i++) {
+		const pt = points[i];
+		if (!Array.isArray(pt) || pt.length < 2) continue;
+		
+		// Convert [y, x] normalized coordinates to canvas coordinates
+		let y = pt[0];
+		let x = pt[1];
+		
+		// Normalize from 0-1000 to 0-1
+		if (coordSystem === 'normalized_0_1000') {
+			y = y / 1000;
+			x = x / 1000;
+		}
+		
+		// Convert to canvas coordinates
+		const canvasX = x * imgW * scaleX;
+		const canvasY = y * imgH * scaleY;
+		
+		// Draw point as a circle with border
+		ctx.fillStyle = color;
+		ctx.strokeStyle = '#ffffff';
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.arc(canvasX, canvasY, 6, 0, 2 * Math.PI);
+		ctx.fill();
+		ctx.stroke();
+		
+		// Draw label for first point only
+		if (i === 0 && label) {
+			drawLabelBox(canvasX - 20, canvasY - 20, label);
+		}
+	}
+	
+	ctx.restore();
+}
+
 // colorForCategory is now imported from ui-utils.js
 
 async function callGeminiREST({ apiKey, model, file }) {
@@ -353,19 +578,13 @@ async function callGeminiREST({ apiKey, model, file }) {
 		{ text: AEC_PROMPT }
 	];
 
-	// Build two payload flavors: snake_case (REST-preferred) and camelCase (fallback)
-	const snake = {
-		contents: [{ parts }],
-		generationConfig: {
-			response_mime_type: "application/json",
-			response_schema: RESPONSE_SCHEMA
-		}
-	};
-	const camel = {
+	const requestBody = {
 		contents: [{ parts }],
 		generationConfig: {
 			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA
+			responseSchema: RESPONSE_SCHEMA,
+			thinkingConfig: { thinkingBudget: 0 },
+			maxOutputTokens: 4096,
 		}
 	};
 
@@ -388,18 +607,11 @@ async function callGeminiREST({ apiKey, model, file }) {
 	}
 
 	try {
-		const data = await post(snake);
+		const data = await post(requestBody);
 		return { data, preprocess };
-	} catch (e1) {
-		// Retry with camelCase schema fields if the first fails
-		try {
-			const data = await post(camel);
-			return { data, preprocess };
-		} catch (e2) {
-			const err = new Error(`Gemini call failed.\nFirst: ${e1.message}\nThen: ${e2.message}`);
-			err.preprocess = preprocess;
-			throw err;
-		}
+	} catch (err) {
+		err.preprocess = preprocess;
+		throw err;
 	}
 }
 
@@ -407,7 +619,7 @@ async function callGeminiREST({ apiKey, model, file }) {
 
 async function analyzeImageBatch(files) {
 	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-pro';
+	const model  = modelEl.value.trim() || 'gemini-2.5-flash';
 
 	if (!apiKey) {
 		logJson({ error: 'Missing API key' }, 'Error');
@@ -431,6 +643,7 @@ async function analyzeImageBatch(files) {
 	clearReport();
 	imageBitmaps = {};
 	currentImageIndex = 0;
+	maskCanvasCache.clear();
 
 	// Create session
 	currentSession = createSession(files);
@@ -460,7 +673,8 @@ async function analyzeImageBatch(files) {
 
 			// Analyze image
 			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const parsed = extractJSONFromResponse(resp);
+			const rawParsed = extractJSONFromResponse(resp);
+			const parsed = transformResponseFormat(rawParsed);
 
 			// Load bitmap for this image
 			const bitmap = await createImageBitmap(image.file);

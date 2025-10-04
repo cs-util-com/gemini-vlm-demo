@@ -1,74 +1,49 @@
 /* istanbul ignore file */
 
 export const AEC_PROMPT = `
-You are an AEC computer-vision assistant.
-Return findings strictly matching the provided response schema across FOUR categories:
-1) General objects (e.g., ladder, scaffold, duct, rebar, crane hook).
-2) Facility assets (e.g., exit sign, fire extinguisher, panel/valve).
-3) Safety issues (e.g., missing PPE, unguarded edge, ladder angle > 75°, blocked exit).
-4) Progress/scene insights (e.g., "drywall phase ~70%", "MEP rough-in present", "finishes started").
+Detect the most relevant objects, equipment, safety issues, facility assets, and progress indicators in this construction/AEC image.
+Return a JSON object with an "items" array (maximum 20 entries). Each item must include:
+- "labels": array of strings ordered from most specific to most general (e.g., ["bag of cement from Company X", "cement", "building material"]). Always include at least one label.
+- "category": one of "object", "facility_asset", "safety_issue", "progress" (use the best fit for the detection).
+- "confidence": detection confidence between 0 and 1.
+- "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized 0-1000 with a top-left origin.
+- "mask": optional base64-encoded PNG segmentation mask aligned to the same region.
+- Optional context objects when relevant:
+  - "safety": { "isViolation": boolean?, "severity": "low"|"medium"|"high"?, "rule": string? }
+  - "progress": { "phase": string?, "percentComplete": number?, "notes": string? }
+  - "attributes": array of { "name": string, "valueStr"?: string, "valueNum"?: number, "valueBool"?: boolean, "unit"?: string }
+  - "relationships": array of { "type": string, "targetId": string }
 
-Geometry:
-- Use bbox as [ymin, xmin, ymax, xmax] array, normalized 0-1000, top-left origin, when localizable.
-- Use polygon only when a box would be misleading (each point {x,y} normalized 0-1000).
-- For whole-image findings (e.g., overall progress), use no geometry under detections (prefer global_insights).
-
-Safety:
-- For safety items, set category: "safety_issue" and fill safety.{isViolation, severity, rule}.
-
-Progress:
-- For per-region progress, set category: "progress" and fill progress.{phase, percentComplete, notes}.
-- For overall progress, prefer global_insights (no geometry).
-
-Attributes:
-- Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
-
-Coordinates:
-- Set image.coordSystem explicitly to "normalized_0_1000" (Google's 0..1000 normalization).
-Be conservative; reflect uncertainty in confidence. Output ONLY JSON (no prose).
+Do not return polygons or keypoints. Use the labels array for both specific names and broader searchable terms instead of separate name/description fields. Include an optional "global_insights" array for whole-image observations following the same labeling approach (labels array, category, confidence, description, optional metrics). Output ONLY JSON with no prose or code fences.
 `.trim();
 
 export const RESPONSE_SCHEMA = {
 	type: "object",
 	properties: {
-		image: {
-			type: "object",
-			properties: {
-				width: { type: "number", nullable: true },
-				height: { type: "number", nullable: true },
-				fileName: { type: "string", nullable: true },
-				coordSystem: { type: "string", enum: ["normalized_0_1000"], nullable: true, description: "Always normalized_0_1000" }
-			},
-			nullable: true
-		},
-		detections: {
+		items: {
 			type: "array",
 			items: {
 				type: "object",
 				properties: {
-					id: { type: "string" },
-					label: { type: "string" },
-					category: { type: "string", enum: ["object","facility_asset","safety_issue","progress","other"] },
+					labels: {
+						type: "array",
+						items: { type: "string" },
+						minItems: 1
+					},
+					category: { type: "string" },
 					confidence: { type: "number" },
-					bbox: {
+					box_2d: {
 						type: "array",
 						items: { type: "number" },
 						minItems: 4,
-						maxItems: 4,
-						description: "[ymin, xmin, ymax, xmax] normalized 0-1000",
-						nullable: true
+						maxItems: 4
 					},
-					polygon: {
-						type: "array",
-						items: { type:"object", properties:{ x:{type:"number"}, y:{type:"number"} }, required:["x","y"] },
-						description: "Array of {x,y} points, each normalized 0-1000",
-						nullable: true
-					},
+					mask: { type: "string", nullable: true },
 					safety: {
 						type: "object",
 						properties: {
 							isViolation: { type: "boolean", nullable: true },
-							severity: { type: "string", enum: ["low","medium","high"], nullable: true },
+							severity: { type: "string", nullable: true },
 							rule: { type: "string", nullable: true }
 						},
 						nullable: true
@@ -97,14 +72,20 @@ export const RESPONSE_SCHEMA = {
 						},
 						nullable: true
 					},
-					useCaseTags: { type: "array", items: { type:"string" }, nullable: true },
 					relationships: {
 						type: "array",
-						items: { type:"object", properties:{ type:{type:"string"}, targetId:{type:"string"} }, required:["type","targetId"] },
+						items: {
+							type: "object",
+							properties: {
+								type: { type: "string" },
+								targetId: { type: "string" }
+							},
+							required: ["type", "targetId"]
+						},
 						nullable: true
 					}
 				},
-				required: ["id","label","category","confidence"]
+				required: ["labels", "category", "confidence", "box_2d"]
 			}
 		},
 		global_insights: {
@@ -112,32 +93,31 @@ export const RESPONSE_SCHEMA = {
 			items: {
 				type: "object",
 				properties: {
-					name: { type: "string" },
-					category: { type:"string", enum:["progress","safety_issue","facility_asset","object","other"] },
+					labels: {
+						type: "array",
+						items: { type: "string" },
+						minItems: 1
+					},
+					category: { type: "string" },
 					description: { type: "string" },
 					confidence: { type: "number" },
 					metrics: {
 						type: "array",
-						items: { type:"object", properties:{ key:{type:"string"}, value:{type:"number"}, unit:{type:"string",nullable:true} }, required:["key","value"] },
-						nullable: true
-					},
-					relatedDetectionIds: { type:"array", items:{type:"string"}, nullable: true },
-					region: {
-						type: "object",
-						properties: {
-							bbox: {
-								type: "object",
-								properties: { x:{type:"number"}, y:{type:"number"}, width:{type:"number"}, height:{type:"number"} },
-								required: ["x","y","width","height"],
-								nullable: true
-							}
+						items: {
+							type: "object",
+							properties: {
+								key: { type: "string" },
+								value: { type: "number" },
+								unit: { type: "string", nullable: true }
+							},
+							required: ["key", "value"]
 						},
 						nullable: true
 					}
 				},
-				required: ["name","category","description","confidence"]
+				required: ["labels", "category", "description", "confidence"]
 			}
 		}
 	},
-	required: ["detections","global_insights"]
+	required: ["items"]
 };
