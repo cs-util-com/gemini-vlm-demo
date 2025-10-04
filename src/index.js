@@ -479,7 +479,7 @@ function createTintedMaskCanvas(image, rgbColor) {
 		}
 		tempCtx.putImageData(imageData, 0, 0);
 		tinted = true;
-	} catch (err) {
+	} catch {
 		// Likely a cross-origin image; fall through to composite-based tinting
 	}
 

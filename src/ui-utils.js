@@ -38,11 +38,7 @@ export function extractJSONFromResponse(resp) {
 	} catch (err) {
 		const cleaned = cleanupPartialMaskJson(raw);
 		if (cleaned !== raw) {
-			try {
-				return JSON.parse(cleaned);
-			} catch (secondErr) {
-				throw secondErr;
-			}
+			return JSON.parse(cleaned);
 		}
 		throw err;
 	}
