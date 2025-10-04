@@ -1,7 +1,7 @@
 # Gemini Vision Demo — Full Specification (Client-Only, Vanilla JS + Gemini 2.5 Pro)
 
 **Status:** v2 with Multi-Image Support
-**Default model:** `gemini-2.5-pro`
+**Default model:** `gemini-2.5-flash` (selectable)
 **Scope:** Single-page web demo (no backend) that accepts 1-20 images, processes them in parallel, and provides comprehensive site-wide analysis with session-level reporting and export capabilities.
 
 ---
@@ -13,11 +13,11 @@
 * Provide a minimal, self-contained **vanilla JS** demo that:
 
   * Accepts 1-20 user-supplied images via drag-and-drop or file picker for batch analysis.
-  * Calls **Gemini 2.5 Pro** directly via REST with a **strict structured-output schema**.
+  * Calls **Gemini 2.5** models (Flash by default) directly via REST with a **strict structured-output schema**.
   * Processes multiple images concurrently (10 parallel requests) for efficient batch analysis.
   * Returns **AEC-oriented detections** (objects, facility assets, safety issues, regional progress) and **global insights** for each image.
   * Provides **session-level aggregates** across all images with safety issue tracking and detection summaries.
-  * Draws **bounding boxes and polygons** on a `<canvas>` overlay for each image with thumbnail navigation.
+  * Draws **bounding boxes and segmentation masks on a `<canvas>` overlay for each image with thumbnail navigation.
   * Displays interactive reports with session summary and per-image sections.
   * **Exports session data** as CSV and JSON for external analysis.
 * Keep the schema **generic** so new AEC findings can be expressed without changing the app.
@@ -28,7 +28,6 @@
 * No server-side proxy, auth, or key management.
 * No storage of images or keys beyond session. No analytics.
 * No integration with BIM, floor plans, WBS, or scheduling tools (future work).
-* No segmentation masks visualization (future work).
 * No mobile camera capture UI (file input only).
 * No localStorage session persistence (sessions are ephemeral).
 
@@ -66,7 +65,7 @@
 
   * Drag-and-drop/file input → render image on `<canvas>`.
   * REST call to Gemini 2.5 Pro using **structured output** (`response_mime_type` + `response_schema`).
-  * Draw returned **bounding boxes/polygons**.
+  * Draw returned **bounding boxes/segmentation masks**.
   * Render full JSON in a `<pre>` block.
 
 ### 3.2 Rationale
@@ -90,12 +89,12 @@
 
   * Password field for **API key** (memory only; not persisted).
   * Model dropdown (defaults to `gemini-2.5-pro`; also lists `gemini-2.5-flash` and `…-flash-lite`).
-  * Buttons: “Choose image…”, “Analyze”.
+  * Buttons: “Choose image…”. Analysis starts automatically after files are selected.
   * Note indicating “Prototype only. Key is not stored.”
 * **Body**
 
   * **Dropzone** (drag-and-drop with highlight on drag).
-  * **Canvas** to show the image and overlays.
+  * **Canvas** to show the image and overlays (boxes, masks).
   * **Interactive Report** panel displaying structured findings in collapsible sections.
   * **JSON panel** showing the raw response.
 
@@ -110,8 +109,8 @@
   * **Global Insights** for whole-image observations
   * **Summary Statistics** with bar chart visualizations (calculated client-side)
   * All sections are independently collapsible via headers
-* **Hover interactions**: Hovering over detection cards highlights their corresponding bounding box/polygon on the canvas with glow effect
-* Boxes/polygons are color-coded by category:
+* **Hover interactions**: Hovering over detection cards highlights their corresponding overlay (box, mask) on the canvas with glow effect
+* Boxes are color-coded by category:
   * `object` → yellow
   * `facility_asset` → cyan
   * `safety_issue` → red
@@ -139,16 +138,6 @@
 {
   "type": "object",
   "properties": {
-    "image": {
-      "type": "object",
-      "properties": {
-        "width": { "type": "number", "nullable": true },
-        "height": { "type": "number", "nullable": true },
-        "fileName": { "type": "string", "nullable": true },
-        "coordSystem": { "type": "string", "enum": ["normalized_0_1000"], "nullable": true, "description": "Always normalized_0_1000" }
-      },
-      "nullable": true
-    },
     "detections": {
       "type": "array",
       "items": {
@@ -267,37 +256,15 @@
 
 ### 5.2 Prompt (model instruction)
 
-Short text prompt accompanying the image:
+Short text prompt accompanying each image:
 
 ```
-You are an AEC computer-vision assistant.
-Return findings strictly matching the provided response schema across FOUR categories:
-1) General objects (e.g., ladder, scaffold, duct, rebar, crane hook).
-2) Facility assets (e.g., exit sign, fire extinguisher, panel/valve).
-3) Safety issues (e.g., missing PPE, unguarded edge, ladder angle > 75°, blocked exit).
-4) Progress/scene insights (e.g., "drywall phase ~70%", "MEP rough-in present", "finishes started").
+Detect the most relevant objects, equipment, safety issues, and facility assets in this construction/AEC image.
 
-Geometry:
-- Use bbox as [ymin, xmin, ymax, xmax] array, normalized 0-1000, top-left origin, when localizable.
-- Use polygon only when a box would be misleading (each point {x,y} normalized 0-1000).
-- For whole-image findings (e.g., overall progress), use no geometry under detections (prefer global_insights).
-
-Safety:
-- For safety items, set category: "safety_issue" and fill safety.{isViolation, severity, rule}.
-
-Progress:
-- For per-region progress, set category: "progress" and fill progress.{phase, percentComplete, notes}.
-- For overall progress, prefer global_insights (no geometry).
-
-Attributes:
-- Add useful metadata as {name, valueNum|valueStr|valueBool, unit?}, e.g., {name:"ladder_angle_deg", valueNum:68, unit:"deg"}.
-
-Coordinates:
-- Set image.coordSystem explicitly to "normalized_0_1000" (Google's 0..1000 normalization).
-Be conservative with confidence. Output ONLY JSON (no prose).
+Return minimum 10 and at most 25 items, prioritizing the most important/relevant detections. 
 ```
 
-**Note:** Aggregates (counts by label/category) are calculated **client-side** to prevent LLM hallucination of statistics.
+**Note:** The structured response is post-processed client-side to add IDs, normalize categories, and compute aggregates.
 
 ---
 
@@ -322,18 +289,19 @@ Content-Type: application/json
     ]
   }],
   "generationConfig": {
-    "response_mime_type": "application/json",
-    "response_schema": { ...see schema above... }
+    "responseMimeType": "application/json",
+    "responseSchema": { ...see schema above... },
+    "thinkingConfig": { "thinkingBudget": 0 },
+    "maxOutputTokens": 1024
   }
 }
 ```
-
-> Note: Implementation tries snake_case first (`response_mime_type`/`response_schema`), then retries with camelCase if needed (`responseMimeType`/`responseSchema`).
 
 ### 6.3 Response Handling
 
 * Expect JSON as a **single text part** in `candidates[0].content.parts[0].text`.
 * Parse JSON; if surrounded by backticks (rare), strip before parsing.
+* `thinkingBudget` is forced to `0` and `maxOutputTokens` is capped to keep latency predictable.
 * On HTTP error, surface `error.message` when available.
 
 ---
@@ -352,7 +320,7 @@ The report is organized into independently collapsible sections:
    * Displays safety violations in a grid of cards
    * Color-coded by severity: High (red), Medium (orange), Low (yellow)
    * Shows: label, severity badge, rule violated, confidence
-   * Hover highlights the corresponding bounding box on canvas
+  * Hover highlights the corresponding overlay on canvas
 
 2. **📊 Progress** (collapsed by default)
    * **Regional Progress**: Progress bars for localized detections with `category: "progress"`
@@ -363,7 +331,7 @@ The report is organized into independently collapsible sections:
    * Grid of cards for every detection
    * Category color-coding (left border): object (yellow), facility_asset (cyan), safety_issue (red), progress (green)
    * Shows: label, confidence, category badge, custom attributes
-   * Hover highlights the corresponding bounding box/polygon on canvas
+   * Hover highlights the corresponding bounding box/segmentations on canvas
 
 4. **💡 Global Insights** (collapsed by default)
    * Cards for whole-image observations (non-progress)
@@ -379,7 +347,7 @@ The report is organized into independently collapsible sections:
 
 ### 7.3 Interactive Features
 
-* **Hover to Highlight**: Mousing over any detection card highlights its bounding box/polygon on the canvas with a glow effect
+* **Hover to Highlight**: Mousing over any detection card highlights its overlay (box, segmentation mask) on the canvas with a glow effect
 * **Collapsible Sections**: Click any section header to expand/collapse
 * **Visual Feedback**: Highlighted cards get border color change and subtle elevation
 
@@ -410,16 +378,17 @@ The report is organized into independently collapsible sections:
   * Then convert to `{x, y, width, height}` format and scale to canvas dimensions.
 * The unified schema enforces `coordSystem: "normalized_0_1000"`, so all box math assumes that normalized range.
 
-### 8.3 Polygons
-
-* Convert each `{x,y}` similarly.
-* Require at least 3 points before drawing; close the path.
-
 ### 8.4 Labels
 
 * Draw a small dark rectangle above the shape with white text:
 
   * `"{label} (NN%)"` when confidence is numeric.
+
+### 8.5 Segmentation Masks
+
+* Masks arrive as PNG data (data URL or base64) aligned to the detection's bounding box.
+* Each mask is tinted with a category-specific palette and cached for reuse to avoid blocking redraws.
+* Render masks before boxes with ~0.5 alpha to keep underlying imagery visible.
 
 ---
 
@@ -447,9 +416,10 @@ The report is organized into independently collapsible sections:
 ## 11) Performance
 
 * Scale image to viewport width for display; keep internal dimensions for accurate math.
+* Preprocess uploads to a ~640 px short side (max long side 1280 px) before sending to Gemini to reduce latency.
 * Avoid unnecessary re-draws (base image is re-drawn once before overlaying).
 * No external libraries; minimal DOM updates.
-* Large images can be downscaled client-side before sending (future enhancement).
+* For unusually large assets, consider cropping or using the Files API in a future iteration.
 
 ---
 
@@ -462,9 +432,6 @@ The report is organized into independently collapsible sections:
 * **Coordinate conversion**
 
   * Given `normalized_0_1000` bbox and known `naturalW/H`, verify pixel conversion.
-* **Polygon conversion**
-
-  * Convert known 3-point polygon in both coord systems; verify resulting screen points.
 * **Label formatting**
 
   * Confidence rounding and truncation for long labels.
