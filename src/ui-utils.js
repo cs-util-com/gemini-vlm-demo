@@ -413,31 +413,66 @@ export function transformResponseFormat(parsed) {
 	if (Array.isArray(parsed.items)) {
 		const maskAssets = gatherMaskAssetMap(parsed);
 		const detections = parsed.items.map((item, idx) => {
+			const labels = Array.isArray(item.labels)
+				? item.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
+				: [];
+			const canonicalLabel = labels[0] || (typeof item.label === 'string' ? item.label : 'unknown');
 			const detection = {
-				id: `det_${idx}`,
-				label: item.label || 'unknown',
+				id: item.id || `det_${idx}`,
+				label: canonicalLabel,
+				labels: labels.length > 0 ? labels : undefined,
+				labelAliases: labels.length > 1 ? labels.slice(1) : undefined,
 				category: item.category || 'object',
 				confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
 				bbox: Array.isArray(item.box_2d) && item.box_2d.length === 4 ? item.box_2d : null
 			};
 			
-			// Add mask if present
 			const resolvedMask = resolveMaskValue(item.mask, maskAssets);
 			if (resolvedMask) {
 				detection.mask = resolvedMask;
 			}
-			
-			// Add points if present
-			if (Array.isArray(item.points) && item.points.length > 0) {
-				detection.points = item.points;
+
+			if (item.safety && typeof item.safety === 'object') {
+				detection.safety = item.safety;
 			}
-			
+
+			if (item.progress && typeof item.progress === 'object') {
+				detection.progress = item.progress;
+			}
+
+			if (Array.isArray(item.attributes) && item.attributes.length > 0) {
+				detection.attributes = item.attributes;
+			}
+
+			if (Array.isArray(item.relationships) && item.relationships.length > 0) {
+				detection.relationships = item.relationships;
+			}
+
 			return detection;
 		});
+
+		const globalInsights = Array.isArray(parsed.global_insights)
+			? parsed.global_insights.map((insight, idx) => {
+				const labels = Array.isArray(insight.labels)
+					? insight.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
+					: [];
+				return {
+					id: insight.id || `ins_${idx}`,
+					name: labels[0] || insight.name || `Insight ${idx + 1}`,
+					labels: labels.length > 0 ? labels : undefined,
+					labelAliases: labels.length > 1 ? labels.slice(1) : undefined,
+					description: typeof insight.description === 'string' ? insight.description : '',
+					category: insight.category || 'other',
+					confidence: typeof insight.confidence === 'number' ? insight.confidence : 0.8,
+					metrics: Array.isArray(insight.metrics) ? insight.metrics : []
+				};
+			})
+			: [];
+
 		const transformed = {
 			image: parsed.image || { coordSystem: 'normalized_0_1000' },
 			detections,
-			global_insights: []
+			global_insights: globalInsights
 		};
 		if (maskAssets) {
 			transformed.maskAssets = maskAssets;

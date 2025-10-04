@@ -134,42 +134,45 @@
 
 * `"normalized_0_1000"` → normalized coordinates [0..1000] (converted to pixels in the renderer).
 
+The model returns a compact envelope with an `items` array for per-detection details and an optional `global_insights` array for whole-image observations. Every detection carries a `labels` array ordered from most specific → most general; the first value becomes the canonical label in the UI.
+
 ```json
 {
   "type": "object",
   "properties": {
-    "detections": {
+    "items": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "label": { "type": "string" },
-          "category": { "type": "string", "enum": ["object", "facility_asset", "safety_issue", "progress", "other"] },
+          "labels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Ordered list of labels from most specific to most general"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["object", "facility_asset", "safety_issue", "progress"]
+          },
           "confidence": { "type": "number" },
-          "bbox": {
+          "box_2d": {
             "type": "array",
             "items": { "type": "number" },
             "minItems": 4,
             "maxItems": 4,
-            "description": "[ymin, xmin, ymax, xmax] normalized 0-1000",
-            "nullable": true
+            "description": "[ymin, xmin, ymax, xmax] normalized 0-1000"
           },
-          "polygon": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
-              "required": ["x", "y"]
-            },
-            "description": "Array of {x,y} points, each normalized 0-1000",
+          "mask": {
+            "type": "string",
+            "description": "Optional base64/URL for a segmentation mask aligned to the bbox",
             "nullable": true
           },
           "safety": {
             "type": "object",
             "properties": {
               "isViolation": { "type": "boolean", "nullable": true },
-              "severity": { "type": "string", "enum": ["low", "medium", "high"], "nullable": true },
+              "severity": { "type": "string", "nullable": true },
               "rule": { "type": "string", "nullable": true }
             },
             "nullable": true
@@ -198,18 +201,20 @@
             },
             "nullable": true
           },
-          "useCaseTags": { "type": "array", "items": { "type": "string" }, "nullable": true },
           "relationships": {
             "type": "array",
             "items": {
               "type": "object",
-              "properties": { "type": { "type": "string" }, "targetId": { "type": "string" } },
+              "properties": {
+                "type": { "type": "string" },
+                "targetId": { "type": "string" }
+              },
               "required": ["type", "targetId"]
             },
             "nullable": true
           }
         },
-        "required": ["id", "label", "category", "confidence"]
+        "required": ["labels", "category", "confidence", "box_2d"]
       }
     },
     "global_insights": {
@@ -217,54 +222,68 @@
       "items": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "category": { "type": "string", "enum": ["progress", "safety_issue", "facility_asset", "object", "other"] },
+          "labels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": ["progress", "safety_issue", "facility_asset", "object", "other"]
+          },
           "description": { "type": "string" },
           "confidence": { "type": "number" },
           "metrics": {
             "type": "array",
             "items": {
               "type": "object",
-              "properties": { "key": { "type": "string" }, "value": { "type": "number" }, "unit": { "type": "string", "nullable": true } },
+              "properties": {
+                "key": { "type": "string" },
+                "value": { "type": "number" },
+                "unit": { "type": "string", "nullable": true }
+              },
               "required": ["key", "value"]
-            },
-            "nullable": true
-          },
-          "relatedDetectionIds": { "type": "array", "items": { "type": "string" }, "nullable": true },
-          "region": {
-            "type": "object",
-            "properties": {
-              "bbox": {
-                "type": "object",
-                "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "width": { "type": "number" }, "height": { "type": "number" } },
-                "required": ["x", "y", "width", "height"],
-                "nullable": true
-              }
             },
             "nullable": true
           }
         },
-        "required": ["name", "category", "description", "confidence"]
-      }
+        "required": ["labels", "category", "description", "confidence"]
+      },
+      "nullable": true
     }
   },
-  "required": ["detections", "global_insights"]
+  "required": ["items"]
 }
 ```
 
-**Note:** The `aggregates` object has been removed from the schema. Counts by label and category are now calculated client-side from the detections array to prevent hallucination of statistics.
+**Notes:**
+
+* Masks are optional—omit `mask` when segmentation is uncertain. Polygon/keypoint payloads are intentionally excluded.
+* When Gemini returns auxiliary mask blobs (`mask_assets`, `maskResources`, etc.), the client consolidates them but they remain optional.
+* Session aggregates are still calculated client-side; the schema stays lean to reduce hallucination surface area.
 
 ### 5.2 Prompt (model instruction)
 
 Short text prompt accompanying each image:
 
 ```
-Detect the most relevant objects, equipment, safety issues, and facility assets in this construction/AEC image.
+Detect the most relevant objects, equipment, safety issues, facility assets, and progress indicators in this construction/AEC image.
+Return a JSON object with an "items" array (maximum 20 entries). Each item must include:
+- "labels": array of strings ordered from most specific to most general (e.g., ["bag of cement from Company X", "cement", "building material"]). Always include at least one label.
+- "category": one of "object", "facility_asset", "safety_issue", "progress" (use the best fit for the detection).
+- "confidence": detection confidence between 0 and 1.
+- "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized 0-1000 with a top-left origin.
+- "mask": optional base64-encoded PNG segmentation mask aligned to the same region (omit when unavailable).
+- Optional context objects when relevant:
+  - "safety": { "isViolation": boolean?, "severity": "low"|"medium"|"high"?, "rule": string? }
+  - "progress": { "phase": string?, "percentComplete": number?, "notes": string? }
+  - "attributes": array of { "name": string, "valueStr"?: string, "valueNum"?: number, "valueBool"?: boolean, "unit"?: string }
+  - "relationships": array of { "type": string, "targetId": string }
 
-Return minimum 10 and at most 25 items, prioritizing the most important/relevant detections. 
+Do not return polygons or keypoints. Use the labels array for both specific names and broader searchable terms instead of separate name/description fields. Include an optional "global_insights" array for whole-image observations following the same labeling approach (labels array, category, confidence, description, optional metrics). Output ONLY JSON with no prose or code fences.
 ```
 
-**Note:** The structured response is post-processed client-side to add IDs, normalize categories, and compute aggregates.
+**Note:** The client transforms this schema into the legacy `detections`/`global_insights` format internally for display and exports.
 
 ---
 
@@ -535,7 +554,7 @@ The report is organized into independently collapsible sections:
 ## 19) Open Questions
 
 1. **Default thresholds:** Should a UI control hide detections below a confidence threshold (e.g., < 0.4)?
-2. **Polygon usage:** In v1, keep polygons optional—should the prompt steer strongly towards **bbox first** to reduce UI complexity?
+2. **Mask guidance:** Now that polygons/keypoints are out of scope, should we add extra prompt tuning or UI affordances to encourage high-quality masks while keeping bboxes as the guaranteed fallback?
 3. **Label taxonomy:** Remain fully freeform, or add light guidance for common facility assets (e.g., “exit sign”, “fire extinguisher”) to improve consistency across runs?
 4. **Safety rules catalog:** Provide a short, curated list of common safety rules to encourage consistent `safety.rule` strings (e.g., PPE categories, ladder angle rule)?
 5. **Download artifacts:** Add “Download JSON” and “Download annotated PNG” buttons?

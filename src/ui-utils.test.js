@@ -417,7 +417,7 @@ describe('transformResponseFormat', () => {
 		const input = {
 			items: [
 				{
-					label: 'ladder',
+					labels: ['ladder', 'equipment'],
 					box_2d: [100, 200, 300, 400],
 					category: 'object',
 					confidence: 0.95
@@ -431,13 +431,16 @@ describe('transformResponseFormat', () => {
 		expect(result).toHaveProperty('global_insights');
 		expect(Array.isArray(result.detections)).toBe(true);
 		expect(result.detections.length).toBe(1);
-		expect(result.detections[0]).toMatchObject({
+		const detection = result.detections[0];
+		expect(detection).toMatchObject({
 			id: 'det_0',
 			label: 'ladder',
+			labels: ['ladder', 'equipment'],
 			bbox: [100, 200, 300, 400],
 			category: 'object',
 			confidence: 0.95
 		});
+		expect(detection.labelAliases).toEqual(['equipment']);
 	});
 
 	it('includes mask when present', () => {
@@ -445,7 +448,7 @@ describe('transformResponseFormat', () => {
 		const input = {
 			items: [
 				{
-					label: 'person',
+					labels: ['person', 'worker'],
 					box_2d: [10, 20, 30, 40],
 					mask: base64,
 					confidence: 0.9
@@ -462,7 +465,7 @@ describe('transformResponseFormat', () => {
 		const input = {
 			items: [
 				{
-					label: 'helmet',
+					labels: ['helmet', 'ppe'],
 					box_2d: [5, 10, 15, 20],
 					mask: 'mask_1'
 				}
@@ -481,7 +484,7 @@ describe('transformResponseFormat', () => {
 		const input = {
 			items: [
 				{
-					label: 'cone',
+					labels: ['cone', 'safety marker'],
 					box_2d: [1, 2, 3, 4],
 					mask: {
 						inline_data: {
@@ -501,7 +504,7 @@ describe('transformResponseFormat', () => {
 		const input = {
 			items: [
 				{
-					label: 'barrier',
+					labels: ['barrier'],
 					box_2d: [10, 10, 20, 20],
 					mask: 'mask_999'
 				}
@@ -512,29 +515,11 @@ describe('transformResponseFormat', () => {
 		expect(result.detections[0].mask).toBeUndefined();
 	});
 
-	it('includes points when present', () => {
-		const input = {
-			items: [
-				{
-					label: 'marker',
-					box_2d: [50, 60, 70, 80],
-					points: [[100, 200], [150, 250]],
-					confidence: 0.85
-				}
-			]
-		};
-		
-		const result = transformResponseFormat(input);
-		
-		expect(result.detections[0]).toHaveProperty('points');
-		expect(result.detections[0].points).toEqual([[100, 200], [150, 250]]);
-	});
-
 	it('sets default values for missing fields', () => {
 		const input = {
 			items: [
 				{
-					label: 'item',
+					labels: ['item'],
 					box_2d: [1, 2, 3, 4]
 				}
 			]
@@ -544,6 +529,47 @@ describe('transformResponseFormat', () => {
 		
 		expect(result.detections[0].category).toBe('object');
 		expect(result.detections[0].confidence).toBe(0.8);
+	});
+
+	it('includes optional metadata fields when present', () => {
+		const input = {
+			items: [
+				{
+					id: 'custom',
+					labels: ['hazard', 'ppe'],
+					box_2d: [0, 0, 10, 10],
+					confidence: 0.99,
+					category: 'safety_issue',
+					safety: { severity: 'high', actions: ['evacuate'] },
+					progress: { status: 'blocked', percent_complete: 35 },
+					attributes: [{ name: 'color', value: 'yellow' }],
+					relationships: [{ type: 'near', target: 'det_7' }]
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		const detection = result.detections[0];
+		expect(detection.id).toBe('custom');
+		expect(detection.safety).toEqual({ severity: 'high', actions: ['evacuate'] });
+		expect(detection.progress).toEqual({ status: 'blocked', percent_complete: 35 });
+		expect(detection.attributes).toEqual([{ name: 'color', value: 'yellow' }]);
+		expect(detection.relationships).toEqual([{ type: 'near', target: 'det_7' }]);
+	});
+
+	it('falls back to legacy label property when labels array missing', () => {
+		const input = {
+			items: [
+				{
+					label: 'legacy-name',
+					box_2d: [0, 1, 2, 3]
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		expect(result.detections[0].label).toBe('legacy-name');
+		expect(result.detections[0].labels).toBeUndefined();
 	});
 
 	it('returns input unchanged if already in legacy format', () => {
@@ -557,6 +583,46 @@ describe('transformResponseFormat', () => {
 		expect(result).toBe(input);
 	});
 
+	it('maps global insights labels and defaults when provided', () => {
+		const input = {
+			items: [],
+			global_insights: [
+				{
+					labels: ['Progress Update', 'Milestone'],
+					description: 'Framing complete on level 2',
+					category: 'progress',
+					confidence: 0.92,
+					metrics: [{ name: 'tasksComplete', value: 14 }]
+				},
+				{
+					name: 'Fallback Insight'
+				}
+			]
+		};
+
+		const result = transformResponseFormat(input);
+		const [firstInsight, secondInsight] = result.global_insights;
+		expect(firstInsight).toMatchObject({
+			id: 'ins_0',
+			name: 'Progress Update',
+			labels: ['Progress Update', 'Milestone'],
+			labelAliases: ['Milestone'],
+			description: 'Framing complete on level 2',
+			category: 'progress',
+			confidence: 0.92,
+			metrics: [{ name: 'tasksComplete', value: 14 }]
+		});
+		expect(secondInsight).toMatchObject({
+			id: 'ins_1',
+			name: 'Fallback Insight',
+			labels: undefined,
+			labelAliases: undefined,
+			description: '',
+			category: 'other',
+			confidence: 0.8
+		});
+	});
+
 	it('returns input unchanged for invalid input', () => {
 		expect(transformResponseFormat(null)).toBe(null);
 		expect(transformResponseFormat(undefined)).toBe(undefined);
@@ -568,7 +634,7 @@ describe('transformResponseFormat', () => {
 		const input = {
 			items: [
 				{
-					label: 'multi',
+					labels: ['multi'],
 					box_2d: [0, 0, 1, 1],
 					mask: 'mask_from_assets_url'
 				}
@@ -620,16 +686,16 @@ describe('transformResponseFormat', () => {
 		const dataUrl = 'data:image/png;base64,alreadyEncoded==';
 		const input = {
 			items: [
-				{ label: 'dataUrl', box_2d: [1, 1, 2, 2], mask: dataUrl },
-				{ label: 'inlineCamel', box_2d: [2, 2, 3, 3], mask: { inlineData: { data: baseInline, mimeType: 'image/gif' } } },
-				{ label: 'directObject', box_2d: [3, 3, 4, 4], mask: { png: basePng } },
-				{ label: 'url', box_2d: [4, 4, 5, 5], mask: { url: 'https://example.com/mask.svg' } },
-				{ label: 'assetBase64', box_2d: [5, 5, 6, 6], mask: 'mask_asset_base64' },
-				{ label: 'assetPngBase64', box_2d: [6, 6, 7, 7], mask: 'mask_asset_png_base64' },
-				{ label: 'assetBytes', box_2d: [7, 7, 8, 8], mask: 'mask_asset_bytes' },
-				{ label: 'unresolvedShort', box_2d: [8, 8, 9, 9], mask: 'short' },
-				{ label: 'invalidObject', box_2d: [9, 9, 10, 10], mask: { foo: 'bar' } },
-				{ label: 'invalidType', box_2d: [10, 10, 11, 11], mask: true }
+				{ labels: ['dataUrl'], box_2d: [1, 1, 2, 2], mask: dataUrl },
+				{ labels: ['inlineCamel'], box_2d: [2, 2, 3, 3], mask: { inlineData: { data: baseInline, mimeType: 'image/gif' } } },
+				{ labels: ['directObject'], box_2d: [3, 3, 4, 4], mask: { png: basePng } },
+				{ labels: ['url'], box_2d: [4, 4, 5, 5], mask: { url: 'https://example.com/mask.svg' } },
+				{ labels: ['assetBase64'], box_2d: [5, 5, 6, 6], mask: 'mask_asset_base64' },
+				{ labels: ['assetPngBase64'], box_2d: [6, 6, 7, 7], mask: 'mask_asset_png_base64' },
+				{ labels: ['assetBytes'], box_2d: [7, 7, 8, 8], mask: 'mask_asset_bytes' },
+				{ labels: ['unresolvedShort'], box_2d: [8, 8, 9, 9], mask: 'short' },
+				{ labels: ['invalidObject'], box_2d: [9, 9, 10, 10], mask: { foo: 'bar' } },
+				{ labels: ['invalidType'], box_2d: [10, 10, 11, 11], mask: true }
 			],
 			mask_assets: {
 				mask_asset_base64: { base64: baseAsset, mimeType: 'image/jpeg' },
@@ -671,12 +737,12 @@ describe('transformResponseFormat', () => {
 		const dataUrlAsset = 'data:image/png;base64,ZXhhbXBsZWRhdGE=';
 		const input = {
 			items: [
-				{ box_2d: [0, 1, 2], mask: invalidCharMask },
-				{ label: 'numberAsset', mask: 'mask_number_asset' },
-				{ label: 'inlineBase64', mask: 'mask_inline_base64' },
-				{ label: 'inlineBytes', mask: 'mask_inline_bytes' },
-				{ label: 'dataUrlAsset', mask: 'mask_data_url_asset' },
-				{ label: 'emptyStringAsset', mask: 'mask_empty_string' }
+				{ labels: ['broken'], box_2d: [0, 1, 2, 3], mask: invalidCharMask },
+				{ labels: ['numberAsset'], mask: 'mask_number_asset', box_2d: [0, 0, 1, 1] },
+				{ labels: ['inlineBase64'], mask: 'mask_inline_base64', box_2d: [0, 0, 1, 1] },
+				{ labels: ['inlineBytes'], mask: 'mask_inline_bytes', box_2d: [0, 0, 1, 1] },
+				{ labels: ['dataUrlAsset'], mask: 'mask_data_url_asset', box_2d: [0, 0, 1, 1] },
+				{ labels: ['emptyStringAsset'], mask: 'mask_empty_string', box_2d: [0, 0, 1, 1] }
 			],
 			mask_assets: {
 				mask_number_asset: 42,
@@ -690,8 +756,9 @@ describe('transformResponseFormat', () => {
 		const result = transformResponseFormat(input);
 		const [first, second, third, fourth, fifth, sixth] = result.detections;
 
-		expect(first.label).toBe('unknown');
-		expect(first.bbox).toBeNull();
+		expect(first.label).toBe('broken');
+		expect(first.labels).toEqual(['broken']);
+		expect(first.bbox).toEqual([0, 1, 2, 3]);
 		expect(first.mask).toBeUndefined();
 		expect(second.mask).toBeUndefined();
 		expect(third.mask).toBe(`data:image/heif;base64,${inlineBase64}`);
