@@ -166,7 +166,7 @@ const segmentationColors = [
 
 ## References
 
-1. Google's spatial understanding demo: `/referenceImplementations/genini-spatial-understanding-demo`
+1. Google's spatial understanding demo: `/referenceImplementations/gemini-spatial-understanding-demo`
 2. Gemini 2.5 spatial understanding docs: https://developers.googleblog.com/en/conversational-image-segmentation-gemini-2-5/
 3. Structured output guidelines: https://ai.google.dev/gemini-api/docs/structured-output
 4. 2D spatial understanding colab: https://colab.research.google.com/github/google-gemini/cookbook/blob/main/quickstarts/Spatial_understanding.ipynb

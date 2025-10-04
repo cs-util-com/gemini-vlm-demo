@@ -7,7 +7,7 @@ Return a JSON object with an "items" array (maximum 20 entries). Each item must 
 - "category": one of "object", "facility_asset", "safety_issue", "progress" (use the best fit for the detection).
 - "confidence": detection confidence between 0 and 1.
 - "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized 0-1000 with a top-left origin.
-- "mask": optional base64-encoded PNG segmentation mask aligned to the same region (omit when unavailable).
+- "mask": optional base64-encoded PNG segmentation mask aligned to the same region.
 - Optional context objects when relevant:
   - "safety": { "isViolation": boolean?, "severity": "low"|"medium"|"high"?, "rule": string? }
   - "progress": { "phase": string?, "percentComplete": number?, "notes": string? }
