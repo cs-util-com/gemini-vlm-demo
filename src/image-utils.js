@@ -27,90 +27,122 @@ export const IMAGE_PREPROCESS_DEFAULTS = Object.freeze({
  * }}
  */
 export function computeResizeDimensions(width, height, options = {}) {
-	if (!Number.isFinite(width) || width <= 0) {
-		throw new Error('Invalid width: must be a positive finite number');
-	}
-	if (!Number.isFinite(height) || height <= 0) {
-		throw new Error('Invalid height: must be a positive finite number');
-	}
+	validateDimension(width, 'width');
+	validateDimension(height, 'height');
 
 	const cfg = { ...IMAGE_PREPROCESS_DEFAULTS, ...options };
-	const shortSide = Math.min(width, height);
-	const longSide = Math.max(width, height);
-	const withinShortTarget = shortSide <= cfg.targetShortSide;
-	const withinLongTarget = !cfg.maxLongSide || longSide <= cfg.maxLongSide;
+	const metrics = buildResizeMetrics(width, height, cfg);
+	const decision = decideResizeStrategy(metrics, cfg);
 
-	if (cfg.allowUpscale === false && shortSide < cfg.minShortSide) {
-		return {
-			scale: 1,
-			width: Math.round(width),
-			height: Math.round(height),
-			resized: false,
-			strategy: 'no-op-small-input'
-		};
+	if (decision.type === 'noop') {
+		return createResizeResult(width, height, 1, false, decision.strategy);
 	}
 
-	if (withinShortTarget && withinLongTarget) {
-		return {
-			scale: 1,
-			width: Math.round(width),
-			height: Math.round(height),
-			resized: false,
-			strategy: 'no-op-already-within-target'
-		};
-	}
-
-	const candidates = [];
-	if (!withinShortTarget) {
-		candidates.push(cfg.targetShortSide / shortSide);
-	}
-	if (!withinLongTarget && cfg.maxLongSide) {
-		candidates.push(cfg.maxLongSide / longSide);
-	}
-	if (candidates.length === 0) {
-		candidates.push(1);
-	}
-
-	const positive = candidates.filter(v => Number.isFinite(v) && v > 0);
-	let scale = positive.length > 0 ? Math.min(...positive, 1) : 1;
-
-	// Ensure we don't shrink below the configured minimum short side when possible
-	const minScale = cfg.minShortSide / shortSide;
-	if (cfg.minShortSide && Number.isFinite(minScale) && minScale > 0 && shortSide * scale < cfg.minShortSide) {
-		scale = Math.max(scale, minScale);
-	}
-
-	if (cfg.allowUpscale === false && scale > 1) {
-		scale = 1;
-	}
-
-	scale = Math.min(scale, 1);
-
+	const scale = finalScaleFor(metrics, cfg, decision.candidates);
 	if (scale >= 0.999) {
-		return {
-			scale: 1,
-			width: Math.round(width),
-			height: Math.round(height),
-			resized: false,
-			strategy: 'no-op-target-achieved'
-		};
+		return createResizeResult(width, height, 1, false, 'no-op-target-achieved');
 	}
 
-	const targetWidth = Math.max(1, Math.round(width * scale));
-	const targetHeight = Math.max(1, Math.round(height * scale));
-
-	let strategy = 'downscale-short-side';
-	if (!withinLongTarget && withinShortTarget) {
-		strategy = 'downscale-long-side';
-	} else if (!withinLongTarget && !withinShortTarget) {
-		strategy = 'downscale-dual-axis';
-	}
-
+	const { targetWidth, targetHeight } = computeScaledDimensions(width, height, scale);
+	const strategy = selectStrategy(metrics.withinShortTarget, metrics.withinLongTarget);
 	return {
 		scale,
 		width: targetWidth,
 		height: targetHeight,
 		resized: true,
+		strategy
+	};
+}
+
+function validateDimension(value, label) {
+	if (!Number.isFinite(value) || value <= 0) {
+		throw new Error(`Invalid ${label}: must be a positive finite number`);
+	}
+}
+
+function buildResizeMetrics(width, height, cfg) {
+	const shortSide = Math.min(width, height);
+	const longSide = Math.max(width, height);
+	return {
+		width,
+		height,
+		shortSide,
+		longSide,
+		withinShortTarget: shortSide <= cfg.targetShortSide,
+		withinLongTarget: !cfg.maxLongSide || longSide <= cfg.maxLongSide
+	};
+}
+
+function decideResizeStrategy(metrics, cfg) {
+	if (cfg.allowUpscale === false && metrics.shortSide < cfg.minShortSide) {
+		return { type: 'noop', strategy: 'no-op-small-input' };
+	}
+
+	if (metrics.withinShortTarget && metrics.withinLongTarget) {
+		return { type: 'noop', strategy: 'no-op-already-within-target' };
+	}
+
+	return {
+		type: 'resize',
+		candidates: gatherScaleCandidates(metrics, cfg)
+	};
+}
+
+function gatherScaleCandidates(metrics, cfg) {
+	const values = [];
+	if (!metrics.withinShortTarget) {
+		values.push(cfg.targetShortSide / metrics.shortSide);
+	}
+	if (!metrics.withinLongTarget && cfg.maxLongSide) {
+		values.push(cfg.maxLongSide / metrics.longSide);
+	}
+	return values.length > 0 ? values : [1];
+}
+
+function finalScaleFor(metrics, cfg, candidates) {
+	const base = selectPositiveScale(candidates);
+	const withMinShortSide = enforceMinShortSide(base, metrics.shortSide, cfg.minShortSide);
+	const noUpscale = cfg.allowUpscale === false ? Math.min(withMinShortSide, 1) : withMinShortSide;
+	return Math.min(noUpscale, 1);
+}
+
+function selectPositiveScale(candidates) {
+	const positive = candidates.filter(v => Number.isFinite(v) && v > 0);
+	return positive.length > 0 ? Math.min(...positive, 1) : 1;
+}
+
+function enforceMinShortSide(scale, shortSide, minShortSide) {
+	if (!minShortSide) return scale;
+	const minScale = minShortSide / shortSide;
+	if (!Number.isFinite(minScale) || minScale <= 0) {
+		return scale;
+	}
+	return shortSide * scale < minShortSide ? Math.max(scale, minScale) : scale;
+}
+
+function computeScaledDimensions(width, height, scale) {
+	return {
+		targetWidth: Math.max(1, Math.round(width * scale)),
+		targetHeight: Math.max(1, Math.round(height * scale))
+	};
+}
+
+function selectStrategy(withinShortTarget, withinLongTarget) {
+	if (!withinLongTarget && withinShortTarget) {
+		return 'downscale-long-side';
+	}
+	if (!withinLongTarget && !withinShortTarget) {
+		return 'downscale-dual-axis';
+	}
+	return 'downscale-short-side';
+}
+
+function createResizeResult(width, height, scale, resized, strategy) {
+	return {
+		scale,
+		width: Math.round(width),
+		height: Math.round(height),
+		resized,
 		strategy
 	};
 }
@@ -218,53 +250,115 @@ export async function downscaleImageForGemini(file, options = {}) {
 	}
 
 	const cfg = { ...IMAGE_PREPROCESS_DEFAULTS, ...options };
-	const sourceBytes = typeof file.size === 'number' ? file.size : null;
-
-	const source = await loadImageSource(file);
-	const resize = computeResizeDimensions(source.width, source.height, cfg);
-
-	let blob = file;
-	let effectiveMime = file.type || cfg.outputFormat;
-	let resized = resize.resized;
-	let converted = null;
-	let conversionError = null;
-
-	if (resize.resized) {
-		try {
-			const canvas = document.createElement('canvas');
-			canvas.width = resize.width;
-			canvas.height = resize.height;
-
-			const ctx = canvas.getContext('2d', { alpha: false });
-			source.draw(ctx, resize.width, resize.height);
-
-			converted = await canvasToBlob(canvas, cfg.outputFormat, cfg.quality);
-		} catch (err) {
-			conversionError = err;
-		}
-	}
+	const sourceBytes = getBlobSize(file);
+	const { source, resize } = await loadSourceAndPlanResize(file, cfg);
+	const { converted, error } = await attemptResizeConversion(source, resize, cfg);
+	const payload = choosePayloadBlob(file, converted, resize, cfg, sourceBytes, error);
+	const summary = buildPreprocessSummary({
+		source,
+		resize,
+		cfg,
+		payload,
+		sourceBytes,
+		conversionError: error
+	});
 
 	source.cleanup();
+	return summary;
+}
 
-	if (resize.resized && converted) {
-		if (cfg.preferSmallerBytes && sourceBytes != null && converted.size >= sourceBytes) {
-			blob = file;
-			resized = false;
-			effectiveMime = file.type || cfg.outputFormat;
-		} else {
-			blob = converted;
-			effectiveMime = converted.type || cfg.outputFormat || file.type;
-		}
-	} else if (conversionError) {
-		resized = false;
+function getBlobSize(blob) {
+	return typeof blob.size === 'number' ? blob.size : null;
+}
+
+async function loadSourceAndPlanResize(file, cfg) {
+	const source = await loadImageSource(file);
+	const resize = computeResizeDimensions(source.width, source.height, cfg);
+	return { source, resize };
+}
+
+async function attemptResizeConversion(source, resize, cfg) {
+	if (!resize.resized) {
+		return { converted: null, error: null };
+	}
+	try {
+		const canvas = document.createElement('canvas');
+		canvas.width = resize.width;
+		canvas.height = resize.height;
+
+		const ctx = canvas.getContext('2d', { alpha: false });
+		source.draw(ctx, resize.width, resize.height);
+
+		const blob = await canvasToBlob(canvas, cfg.outputFormat, cfg.quality);
+		return { converted: blob, error: null };
+	} catch (error) {
+		return { converted: null, error };
+	}
+}
+
+function choosePayloadBlob(originalFile, convertedBlob, resize, cfg, sourceBytes, conversionError) {
+	const baseMime = originalFile.type || cfg.outputFormat;
+	if (!resize.resized || !convertedBlob) {
+		return {
+			blob: originalFile,
+			mimeType: baseMime,
+			resized: false,
+			discardReason: conversionError ? 'conversion-error' : null
+		};
 	}
 
-	const targetWidth = resized ? resize.width : source.width;
-	const targetHeight = resized ? resize.height : source.height;
-	const targetBytes = typeof blob.size === 'number' ? blob.size : null;
-	const footprint = estimateTileFootprint(targetWidth, targetHeight, cfg.tileSize);
+	if (cfg.preferSmallerBytes && sourceBytes != null && convertedBlob.size >= sourceBytes) {
+		return {
+			blob: originalFile,
+			mimeType: baseMime,
+			resized: false,
+			discardReason: 'larger-than-source'
+		};
+	}
 
-	const ratio = sourceBytes && targetBytes ? targetBytes / sourceBytes : null;
+	return {
+		blob: convertedBlob,
+		mimeType: convertedBlob.type || cfg.outputFormat || originalFile.type,
+		resized: true,
+		discardReason: null
+	};
+}
+
+function buildPreprocessSummary({ source, resize, cfg, payload, sourceBytes, conversionError }) {
+	const targetWidth = payload.resized ? resize.width : source.width;
+	const targetHeight = payload.resized ? resize.height : source.height;
+	const targetBytes = getBlobSize(payload.blob);
+	const footprint = estimateTileFootprint(targetWidth, targetHeight, cfg.tileSize);
+	const compressionRatio = sourceBytes && targetBytes ? targetBytes / sourceBytes : null;
+	const warnings = collectPreprocessWarnings({
+		footprint,
+		targetBytes,
+		conversionError,
+		resize,
+		payload
+	});
+
+	return {
+		blob: payload.blob,
+		mimeType: payload.mimeType,
+		resized: payload.resized,
+		sourceWidth: source.width,
+		sourceHeight: source.height,
+		targetWidth,
+		targetHeight,
+		sourceBytes,
+		targetBytes,
+		scale: payload.resized ? resize.scale : 1,
+		strategy: resize.strategy,
+		footprint,
+		tileSize: cfg.tileSize,
+		estimatedTokens: footprint.estimatedTokens,
+		compressionRatio,
+		warnings
+	};
+}
+
+function collectPreprocessWarnings({ footprint, targetBytes, conversionError, resize, payload }) {
 	const warnings = [];
 	if (footprint.totalTiles > 4) {
 		warnings.push('Image spans more than four 768px tiles; consider cropping regions of interest for higher fidelity.');
@@ -272,26 +366,11 @@ export async function downscaleImageForGemini(file, options = {}) {
 	if (targetBytes != null && targetBytes > 18 * 1024 * 1024) {
 		warnings.push('Inline payload is approaching the 20 MB limit. Consider additional compression or the Files API.');
 	}
-	if (!resized && resize.resized && conversionError) {
+	if (!payload.resized && resize.resized && conversionError) {
 		warnings.push(`Failed to downscale image: ${conversionError.message}`);
 	}
-
-	return {
-		blob,
-		mimeType: effectiveMime,
-		resized,
-		sourceWidth: source.width,
-		sourceHeight: source.height,
-		targetWidth,
-		targetHeight,
-		sourceBytes,
-		targetBytes,
-		scale: resized ? resize.scale : 1,
-		strategy: resize.strategy,
-		footprint,
-		tileSize: cfg.tileSize,
-		estimatedTokens: footprint.estimatedTokens,
-		compressionRatio: ratio,
-		warnings
-	};
+	if (!payload.resized && payload.discardReason === 'larger-than-source') {
+		warnings.push('Downscaled image exceeded original file size; kept original bytes instead.');
+	}
+	return warnings;
 }

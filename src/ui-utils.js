@@ -46,148 +46,158 @@ export function extractJSONFromResponse(resp) {
 
 function cleanupPartialMaskJson(raw) {
 	if (typeof raw !== 'string' || raw.length === 0) return raw;
-	const maskKeyToken = '"mask"';
 	let result = raw;
-	let searchIndex = 0;
-	let changed = false;
+	let index = 0;
+	let mutated = false;
 
-	while (searchIndex < result.length) {
-		const keyIndex = result.indexOf(maskKeyToken, searchIndex);
+	while (index < result.length) {
+		const keyIndex = result.indexOf('"mask"', index);
 		if (keyIndex === -1) break;
-
-		let cursor = keyIndex + maskKeyToken.length;
-		while (cursor < result.length && /\s/.test(result[cursor])) cursor++;
-		if (cursor >= result.length || result[cursor] !== ':') {
-			searchIndex = cursor;
+		const colonIndex = findColonAfter(result, keyIndex + 6);
+		if (colonIndex === -1) {
+			index = keyIndex + 6;
 			continue;
 		}
-		cursor++;
-		while (cursor < result.length && /\s/.test(result[cursor])) cursor++;
-
-		const { start, end, terminated } = findJsonValueRange(result, cursor);
-		if (start >= result.length) break;
-
-		const valueSnippet = result.slice(start, end);
-		const containsMaskSentinel = valueSnippet.includes('start_of_mask');
-		const valueLooksBroken = !terminated;
-		if (containsMaskSentinel || valueLooksBroken) {
-			result = `${result.slice(0, start)}null${result.slice(end)}`;
-			changed = true;
-			searchIndex = start + 4; // length of 'null'
-			continue;
+		const valueStart = skipWhitespace(result, colonIndex + 1);
+		const range = findJsonValueRange(result, valueStart);
+		if (shouldNullifyMaskValue(result, range)) {
+			result = replaceSegment(result, range.start, range.end, 'null');
+			mutated = true;
+			index = range.start + 4;
+		} else {
+			index = Math.max(range.end, valueStart + 1);
 		}
-
-		searchIndex = end;
 	}
 
-	if (!changed) return raw;
+	return mutated ? autoCloseJson(result) : raw;
+}
 
-	return autoCloseJson(result);
+function findColonAfter(source, startIndex) {
+	const len = source.length;
+	let idx = skipWhitespace(source, startIndex);
+	while (idx < len) {
+		if (source[idx] === ':') return idx;
+		if (!/\s/.test(source[idx])) break;
+		idx++;
+	}
+	return -1;
+}
+
+function skipWhitespace(source, fromIndex) {
+	let idx = fromIndex;
+	while (idx < source.length && /\s/.test(source[idx])) idx++;
+	return idx;
+}
+
+function shouldNullifyMaskValue(source, range) {
+	if (range.start >= source.length) return false;
+	const snippet = source.slice(range.start, range.end);
+	return snippet.includes('start_of_mask') || !range.terminated;
+}
+
+function replaceSegment(source, start, end, replacement) {
+	return `${source.slice(0, start)}${replacement}${source.slice(end)}`;
 }
 
 function findJsonValueRange(source, startIndex) {
-	const len = source.length;
-	let idx = startIndex;
-	while (idx < len && /\s/.test(source[idx])) idx++;
-	const valueStart = idx;
-	if (idx >= len) {
-		return { start: valueStart, end: len, terminated: false };
+	const valueStart = skipWhitespace(source, startIndex);
+	if (valueStart >= source.length) {
+		return { start: valueStart, end: source.length, terminated: false };
 	}
-
-	const firstChar = source[idx];
+	const firstChar = source[valueStart];
 	if (firstChar === '"') {
-		idx++;
-		let escaped = false;
-		while (idx < len) {
-			const ch = source[idx];
-			if (escaped) {
-				escaped = false;
-			} else if (ch === '\\') {
-				escaped = true;
-			} else if (ch === '"') {
-				idx++;
-				return { start: valueStart, end: idx, terminated: true };
-			}
-			idx++;
-		}
-		return { start: valueStart, end: len, terminated: false };
+		return scanStringValue(source, valueStart);
 	}
-
 	if (firstChar === '{' || firstChar === '[') {
-		const stack = [firstChar === '{' ? '}' : ']'];
-		idx++;
-		let inString = false;
-		let escaped = false;
-		while (idx < len && stack.length > 0) {
-			const ch = source[idx];
-			if (inString) {
-				if (escaped) {
-					escaped = false;
-				} else if (ch === '\\') {
-					escaped = true;
-				} else if (ch === '"') {
-					inString = false;
-				}
-			} else {
-				if (ch === '"') {
-					inString = true;
-				} else if (ch === '{') {
-					stack.push('}');
-				} else if (ch === '[') {
-					stack.push(']');
-				} else if ((ch === '}' || ch === ']') && stack[stack.length - 1] === ch) {
-					stack.pop();
-				}
-			}
-			idx++;
-		}
-		return { start: valueStart, end: idx, terminated: stack.length === 0 };
+		return scanContainerValue(source, valueStart, firstChar === '{' ? '}' : ']');
 	}
+	return scanPrimitiveValue(source, valueStart);
+}
 
-	while (idx < len && !/[\s,}\]]/.test(source[idx])) idx++;
-	const terminated = idx < len;
-	return { start: valueStart, end: idx, terminated };
+function scanStringValue(source, start) {
+	let idx = start + 1;
+	let escaped = false;
+	while (idx < source.length) {
+		const ch = source[idx];
+		if (escaped) {
+			escaped = false;
+		} else if (ch === '\\') {
+			escaped = true;
+		} else if (ch === '"') {
+			return { start, end: idx + 1, terminated: true };
+		}
+		idx++;
+	}
+	return { start, end: source.length, terminated: false };
+}
+
+function scanContainerValue(source, start, closingChar) {
+	const state = {
+		stack: [closingChar],
+		idx: start + 1,
+		inString: false,
+		escaped: false
+	};
+	while (state.idx < source.length && state.stack.length > 0) {
+		updateContainerState(state, source[state.idx]);
+		state.idx++;
+	}
+	return { start, end: state.idx, terminated: state.stack.length === 0 };
+}
+
+function updateContainerState(state, ch) {
+	if (state.inString) {
+		handleStringState(state, ch);
+		return;
+	}
+	if (ch === '"') {
+		state.inString = true;
+		return;
+	}
+	if (ch === '{') {
+		state.stack.push('}');
+		return;
+	}
+	if (ch === '[') {
+		state.stack.push(']');
+		return;
+	}
+	if ((ch === '}' || ch === ']') && state.stack[state.stack.length - 1] === ch) {
+		state.stack.pop();
+	}
+}
+
+function handleStringState(state, ch) {
+	if (state.escaped) {
+		state.escaped = false;
+		return;
+	}
+	if (ch === '\\') {
+		state.escaped = true;
+		return;
+	}
+	if (ch === '"') {
+		state.inString = false;
+	}
+}
+
+function scanPrimitiveValue(source, start) {
+	let idx = start;
+	while (idx < source.length && !/[\s,}\]]/.test(source[idx])) idx++;
+	return { start, end: idx, terminated: idx < source.length };
 }
 
 function autoCloseJson(source) {
-	const stack = [];
-	let inString = false;
-	let escaped = false;
-	for (let i = 0; i < source.length; i++) {
-		const ch = source[i];
-		if (inString) {
-			if (escaped) {
-				escaped = false;
-			} else if (ch === '\\') {
-				escaped = true;
-			} else if (ch === '"') {
-				inString = false;
-			}
-			continue;
-		}
-		if (ch === '"') {
-			inString = true;
-			continue;
-		}
-		if (ch === '{') {
-			stack.push('}');
-			continue;
-		}
-		if (ch === '[') {
-			stack.push(']');
-			continue;
-		}
-		if ((ch === '}' || ch === ']') && stack.length > 0 && stack[stack.length - 1] === ch) {
-			stack.pop();
-		}
-	}
+	const pendingClosers = collectPendingClosers(source);
+	return pendingClosers.length > 0 ? source + pendingClosers.join('') : source;
+}
 
-	if (stack.length === 0) return source;
-	let suffix = '';
-	for (let i = stack.length - 1; i >= 0; i--) {
-		suffix += stack[i];
+function collectPendingClosers(source) {
+	const state = { stack: [], inString: false, escaped: false };
+	for (let i = 0; i < source.length; i++) {
+		updateContainerState(state, source[i]);
 	}
-	return source + suffix;
+	return state.stack.reverse();
 }
 
 function assertFiniteNumber(value, name, { allowZero = false } = {}) {
@@ -412,61 +422,9 @@ export function transformResponseFormat(parsed) {
 	// If already in new format with 'items', transform it
 	if (Array.isArray(parsed.items)) {
 		const maskAssets = gatherMaskAssetMap(parsed);
-		const detections = parsed.items.map((item, idx) => {
-			const labels = Array.isArray(item.labels)
-				? item.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
-				: [];
-			const canonicalLabel = labels[0] || (typeof item.label === 'string' ? item.label : 'unknown');
-			const detection = {
-				id: item.id || `det_${idx}`,
-				label: canonicalLabel,
-				labels: labels.length > 0 ? labels : undefined,
-				labelAliases: labels.length > 1 ? labels.slice(1) : undefined,
-				category: item.category || 'object',
-				confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
-				bbox: Array.isArray(item.box_2d) && item.box_2d.length === 4 ? item.box_2d : null
-			};
-			
-			const resolvedMask = resolveMaskValue(item.mask, maskAssets);
-			if (resolvedMask) {
-				detection.mask = resolvedMask;
-			}
-
-			if (item.safety && typeof item.safety === 'object') {
-				detection.safety = item.safety;
-			}
-
-			if (item.progress && typeof item.progress === 'object') {
-				detection.progress = item.progress;
-			}
-
-			if (Array.isArray(item.attributes) && item.attributes.length > 0) {
-				detection.attributes = item.attributes;
-			}
-
-			if (Array.isArray(item.relationships) && item.relationships.length > 0) {
-				detection.relationships = item.relationships;
-			}
-
-			return detection;
-		});
-
+		const detections = parsed.items.map((item, idx) => createDetectionFromItem(item, idx, maskAssets));
 		const globalInsights = Array.isArray(parsed.global_insights)
-			? parsed.global_insights.map((insight, idx) => {
-				const labels = Array.isArray(insight.labels)
-					? insight.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
-					: [];
-				return {
-					id: insight.id || `ins_${idx}`,
-					name: labels[0] || insight.name || `Insight ${idx + 1}`,
-					labels: labels.length > 0 ? labels : undefined,
-					labelAliases: labels.length > 1 ? labels.slice(1) : undefined,
-					description: typeof insight.description === 'string' ? insight.description : '',
-					category: insight.category || 'other',
-					confidence: typeof insight.confidence === 'number' ? insight.confidence : 0.8,
-					metrics: Array.isArray(insight.metrics) ? insight.metrics : []
-				};
-			})
+			? parsed.global_insights.map((insight, idx) => createInsightFromEntry(insight, idx))
 			: [];
 
 		const transformed = {
@@ -483,4 +441,89 @@ export function transformResponseFormat(parsed) {
 	
 	// Otherwise return as-is (already in legacy format)
 	return parsed;
+}
+
+function createDetectionFromItem(item, index, maskAssets) {
+	const labelInfo = extractDetectionLabels(item);
+	const detection = buildDetectionSkeleton(item, labelInfo, index);
+	applyOptionalDetectionFields(detection, item, maskAssets);
+	return detection;
+}
+
+function extractDetectionLabels(item) {
+	const labels = Array.isArray(item.labels)
+		? item.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
+		: [];
+	return {
+		all: labels,
+		primary: labels[0] || (typeof item.label === 'string' ? item.label : 'unknown')
+	};
+}
+
+function buildDetectionSkeleton(item, labelInfo, index) {
+	return {
+		id: item.id || `det_${index}`,
+		label: labelInfo.primary,
+		labels: labelInfo.all.length > 0 ? labelInfo.all : undefined,
+		labelAliases: labelInfo.all.length > 1 ? labelInfo.all.slice(1) : undefined,
+		category: item.category || 'object',
+		confidence: typeof item.confidence === 'number' ? item.confidence : 0.8,
+		bbox: Array.isArray(item.box_2d) && item.box_2d.length === 4 ? item.box_2d : null
+	};
+}
+
+function applyOptionalDetectionFields(target, item, maskAssets) {
+	const resolvedMask = resolveMaskValue(item.mask, maskAssets);
+	if (resolvedMask) {
+		target.mask = resolvedMask;
+	}
+	copyIfObject(target, 'safety', item.safety);
+	copyIfObject(target, 'progress', item.progress);
+	copyIfNonEmptyArray(target, 'attributes', item.attributes);
+	copyIfNonEmptyArray(target, 'relationships', item.relationships);
+}
+
+function copyIfObject(target, key, value) {
+	if (value && typeof value === 'object' && !Array.isArray(value)) {
+		target[key] = value;
+	}
+}
+
+function copyIfNonEmptyArray(target, key, value) {
+	if (Array.isArray(value) && value.length > 0) {
+		target[key] = value;
+	}
+}
+
+function createInsightFromEntry(insight, index) {
+	const labelInfo = extractInsightLabels(insight);
+	const base = buildInsightSkeleton(insight, labelInfo, index);
+	return assignInsightMetrics(base, insight.metrics);
+}
+
+function extractInsightLabels(insight) {
+	const labels = Array.isArray(insight.labels)
+		? insight.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
+		: [];
+	return {
+		list: labels,
+		primary: labels[0] || (typeof insight.name === 'string' ? insight.name.trim() : '')
+	};
+}
+
+function buildInsightSkeleton(insight, labelInfo, index) {
+	return {
+		id: insight.id || `ins_${index}`,
+		name: labelInfo.primary || `Insight ${index + 1}`,
+		labels: labelInfo.list.length > 0 ? labelInfo.list : undefined,
+		labelAliases: labelInfo.list.length > 1 ? labelInfo.list.slice(1) : undefined,
+		description: typeof insight.description === 'string' ? insight.description : '',
+		category: insight.category || 'other',
+		confidence: typeof insight.confidence === 'number' ? insight.confidence : 0.8
+	};
+}
+
+function assignInsightMetrics(target, metrics) {
+	target.metrics = Array.isArray(metrics) ? metrics : [];
+	return target;
 }

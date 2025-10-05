@@ -29,49 +29,65 @@ export function calculateAggregates(detections) {
  * Render the interactive report UI
  */
 export function renderReportUI(data) {
-	const detections = Array.isArray(data.detections) ? data.detections : [];
-	const insights = Array.isArray(data.global_insights) ? data.global_insights : [];
-	const aggregates = calculateAggregates(detections);
-	const preprocessing = data?.image?.preprocessing;
+	const context = buildReportContext(data);
+	return [
+		renderPreprocessingSection(context),
+		renderSafetySection(context),
+		renderProgressSectionWrapper(context),
+		renderDetectionsSection(context),
+		renderInsightsSection(context),
+		renderAggregatesSection(context)
+	]
+		.filter(Boolean)
+		.join('');
+}
 
-	// Separate safety issues and progress items
-	const safetyIssues = detections.filter(d => d.category === 'safety_issue');
-	const progressItems = detections.filter(d => d.category === 'progress' && d.progress);
+function buildReportContext(data) {
+	const detections = Array.isArray(data?.detections) ? data.detections : [];
+	const insights = Array.isArray(data?.global_insights) ? data.global_insights : [];
+	return {
+		detections,
+		insights,
+		aggregates: calculateAggregates(detections),
+		preprocessing: data?.image?.preprocessing,
+		safetyIssues: detections.filter(det => det.category === 'safety_issue'),
+		progressItems: detections.filter(det => det.category === 'progress' && det.progress),
+		progressInsights: insights.filter(insight => insight.category === 'progress'),
+		otherInsights: insights.filter(insight => insight.category !== 'progress')
+	};
+}
 
-	let html = '';
+function renderPreprocessingSection(context) {
+	if (!context.preprocessing) return '';
+	return renderSection('preprocessing', '🖼️ Image Preprocessing', renderPreprocessing(context.preprocessing), false);
+}
 
-	if (preprocessing) {
-		html += renderSection('preprocessing', '🖼️ Image Preprocessing', renderPreprocessing(preprocessing), false);
+function renderSafetySection(context) {
+	if (context.safetyIssues.length === 0) return '';
+	return renderSection('safety', '🚨 Safety Issues', renderSafetyCards(context.safetyIssues), false);
+}
+
+function renderProgressSectionWrapper(context) {
+	if (context.progressItems.length === 0 && context.progressInsights.length === 0) return '';
+	return renderSection('progress', '📊 Progress', renderProgressSection(context.progressItems, context.progressInsights), true);
+}
+
+function renderDetectionsSection(context) {
+	if (context.detections.length === 0) return '';
+	return renderSection('detections', '🔍 All Detections', renderDetectionCards(context.detections), true);
+}
+
+function renderInsightsSection(context) {
+	if (context.otherInsights.length === 0) return '';
+	return renderSection('insights', '💡 Global Insights', renderInsights(context.otherInsights), true);
+}
+
+function renderAggregatesSection(context) {
+	const { aggregates } = context;
+	if (aggregates.countsByLabel.length === 0 && aggregates.countsByCategory.length === 0) {
+		return '';
 	}
-
-	// Safety Issues Section (if any)
-	if (safetyIssues.length > 0) {
-		html += renderSection('safety', '🚨 Safety Issues', renderSafetyCards(safetyIssues), false);
-	}
-
-	// Progress Section (if any detections or insights)
-	const progressInsights = insights.filter(i => i.category === 'progress');
-	if (progressItems.length > 0 || progressInsights.length > 0) {
-		html += renderSection('progress', '📊 Progress', renderProgressSection(progressItems, progressInsights), true);
-	}
-
-	// All Detections Section
-	if (detections.length > 0) {
-		html += renderSection('detections', '🔍 All Detections', renderDetectionCards(detections), true);
-	}
-
-	// Global Insights Section (non-progress)
-	const otherInsights = insights.filter(i => i.category !== 'progress');
-	if (otherInsights.length > 0) {
-		html += renderSection('insights', '💡 Global Insights', renderInsights(otherInsights), true);
-	}
-
-	// Aggregates Section
-	if (aggregates.countsByLabel.length > 0 || aggregates.countsByCategory.length > 0) {
-		html += renderSection('aggregates', '📈 Summary Statistics', renderAggregates(aggregates), true);
-	}
-
-	return html;
+	return renderSection('aggregates', '📈 Summary Statistics', renderAggregates(aggregates), true);
 }
 
 function renderSection(id, title, content, collapsed = false) {
@@ -90,60 +106,105 @@ function renderSection(id, title, content, collapsed = false) {
 }
 
 function renderPreprocessing(meta) {
-	const cards = [];
-	const scalePercent = typeof meta.scale === 'number' ? Math.round(meta.scale * 100) : 100;
-	const tileLabel = meta.footprint
-		? `${meta.footprint.totalTiles} tile${meta.footprint.totalTiles === 1 ? '' : 's'} (${meta.footprint.tilesAcross}×${meta.footprint.tilesDown} grid)`
-		: '—';
-	const strategyLabel = describeStrategy(meta.strategy, meta.resized);
-
-	if (meta.sourceWidth && meta.sourceHeight) {
-		cards.push(renderPreprocessMetric('Original resolution', `${meta.sourceWidth}×${meta.sourceHeight}`));
-	}
-
-	if (meta.targetWidth && meta.targetHeight) {
-		const note = meta.resized
-			? `${scalePercent}% scale • ${strategyLabel}`
-			: 'Sent as-is';
-		cards.push(renderPreprocessMetric('Sent to Gemini', `${meta.targetWidth}×${meta.targetHeight}`, note));
-	}
-
-	cards.push(renderPreprocessMetric('Tile footprint', tileLabel, `${meta.tileSize || 768}px reference`));
-
-	if (typeof meta.estimatedTokens === 'number') {
-		cards.push(renderPreprocessMetric('Estimated tokens', meta.estimatedTokens.toLocaleString(), 'Approx. 258 tokens per tile'));
-	}
-
-	if (typeof meta.sourceBytes === 'number') {
-		cards.push(renderPreprocessMetric('Original file size', formatBytes(meta.sourceBytes), meta.mimeType ? `Original ${meta.mimeType}` : undefined));
-	}
-
-	if (typeof meta.targetBytes === 'number') {
-		const note = meta.resized ? 'After resize/compression' : 'Original image bytes';
-		cards.push(renderPreprocessMetric('Payload bytes sent', formatBytes(meta.targetBytes), note));
-	}
-
-	if (meta.compressionRatio != null) {
-		const pct = Math.round(meta.compressionRatio * 100);
-		cards.push(renderPreprocessMetric('Size vs. original', `${pct}%`, pct < 100 ? 'Compressed before upload' : 'No size savings'));
-	}
-
-	let warningsHtml = '';
-	if (Array.isArray(meta.warnings) && meta.warnings.length > 0) {
-		const items = meta.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
-		warningsHtml = `
-			<div style="margin-top:16px; padding:12px 16px; border-radius:8px; border:1px solid #513417; background: #24160b; color:#f8b26a;">
-				<strong style="display:block; margin-bottom:4px;">Optimization tips</strong>
-				<ul style="margin:0; padding-left:20px;">${items}</ul>
-			</div>
-		`;
-	}
-
+	const metrics = buildPreprocessingMetrics(meta);
+	const warningsHtml = renderPreprocessingWarnings(meta);
 	return `
 		<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-			${cards.join('')}
+			${metrics.map(metric => renderPreprocessMetric(metric.label, metric.value, metric.note)).join('')}
 		</div>
 		${warningsHtml}
+	`;
+}
+
+function buildPreprocessingMetrics(meta) {
+	const metrics = [];
+	addDimensionMetrics(meta, metrics);
+	addFootprintMetric(meta, metrics);
+	addTokenMetric(meta, metrics);
+	addSizeMetrics(meta, metrics);
+	addCompressionMetric(meta, metrics);
+	return metrics;
+}
+
+function addDimensionMetrics(meta, metrics) {
+	if (meta.sourceWidth && meta.sourceHeight) {
+		metrics.push({ label: 'Original resolution', value: `${meta.sourceWidth}×${meta.sourceHeight}` });
+	}
+	if (meta.targetWidth && meta.targetHeight) {
+		const note = meta.resized
+			? `${describeScalePercent(meta)}% scale • ${describeStrategy(meta.strategy, meta.resized)}`
+			: 'Sent as-is';
+		metrics.push({ label: 'Sent to Gemini', value: `${meta.targetWidth}×${meta.targetHeight}`, note });
+	}
+}
+
+function addFootprintMetric(meta, metrics) {
+	metrics.push({
+		label: 'Tile footprint',
+		value: describeTileFootprint(meta.footprint, meta.tileSize),
+		note: `${meta.tileSize || 768}px reference`
+	});
+}
+
+function addTokenMetric(meta, metrics) {
+	if (typeof meta.estimatedTokens !== 'number') return;
+	metrics.push({
+		label: 'Estimated tokens',
+		value: meta.estimatedTokens.toLocaleString(),
+		note: 'Approx. 258 tokens per tile'
+	});
+}
+
+function addSizeMetrics(meta, metrics) {
+	if (typeof meta.sourceBytes === 'number') {
+		metrics.push({
+			label: 'Original file size',
+			value: formatBytes(meta.sourceBytes),
+			note: meta.mimeType ? `Original ${meta.mimeType}` : undefined
+		});
+	}
+	if (typeof meta.targetBytes === 'number') {
+		metrics.push({
+			label: 'Payload bytes sent',
+			value: formatBytes(meta.targetBytes),
+			note: meta.resized ? 'After resize/compression' : 'Original image bytes'
+		});
+	}
+}
+
+function addCompressionMetric(meta, metrics) {
+	if (meta.compressionRatio == null) return;
+	const pct = Math.round(meta.compressionRatio * 100);
+	metrics.push({
+		label: 'Size vs. original',
+		value: `${pct}%`,
+		note: pct < 100 ? 'Compressed before upload' : 'No size savings'
+	});
+}
+
+function describeScalePercent(meta) {
+	return typeof meta.scale === 'number' ? Math.round(meta.scale * 100) : 100;
+}
+
+function describeTileFootprint(footprint, tileSize) {
+	if (!footprint) return '—';
+	const tiles = footprint.totalTiles;
+	const grid = `${footprint.tilesAcross}×${footprint.tilesDown} grid`;
+	const tileWord = tiles === 1 ? 'tile' : 'tiles';
+	const size = tileSize || 768;
+	return `${tiles} ${tileWord} (${grid}, ${size}px)`;
+}
+
+function renderPreprocessingWarnings(meta) {
+	if (!Array.isArray(meta.warnings) || meta.warnings.length === 0) {
+		return '';
+	}
+	const items = meta.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('');
+	return `
+		<div style="margin-top:16px; padding:12px 16px; border-radius:8px; border:1px solid #513417; background: #24160b; color:#f8b26a;">
+			<strong style="display:block; margin-bottom:4px;">Optimization tips</strong>
+			<ul style="margin:0; padding-left:20px;">${items}</ul>
+		</div>
 	`;
 }
 

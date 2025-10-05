@@ -58,6 +58,18 @@ let currentSession = null;
 let currentImageIndex = 0;
 let imageBitmaps = {}; // Store bitmaps by imageId
 const maskCanvasCache = new Map(); // Cache tinted segmentation mask canvases per detection
+const SEGMENTATION_COLORS = Object.freeze([
+	[230, 25, 75],    // Red
+	[60, 180, 75],    // Green
+	[255, 225, 25],   // Yellow
+	[0, 130, 200],    // Blue
+	[245, 130, 48],   // Orange
+	[145, 30, 180],   // Purple
+	[70, 240, 240],   // Cyan
+	[240, 50, 230],   // Magenta
+	[191, 239, 69],   // Lime
+	[250, 190, 212]   // Pink
+]);
 let naturalW = 0, naturalH = 0;
 let highlightedDetectionId = null;
 let isAnalyzing = false;
@@ -73,113 +85,134 @@ function clearReport() {
 }
 
 function drawOverlays() {
-	if (!currentSession || currentImageIndex >= currentSession.images.length) return;
+	const context = prepareOverlayContext();
+	if (!context) return;
 
+	redrawBaseImage(context);
+	context.detections.forEach((detection, index) => {
+		drawDetectionOverlay(detection, index, context);
+	});
+}
+
+function prepareOverlayContext() {
+	if (!currentSession || currentImageIndex >= currentSession.images.length) return null;
 	const currentImage = currentSession.images[currentImageIndex];
-	const imageId = currentImage.imageId;
-	const bitmap = imageBitmaps[imageId];
+	const bitmap = imageBitmaps[currentImage.imageId];
 	const result = currentImage.result;
-
-	if (!bitmap || !result) return;
-
-	// Redraw base image
-	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+	if (!bitmap || !result) return null;
 
 	const detections = Array.isArray(result.detections) ? result.detections : [];
-	const scaleX = canvas.width / naturalW;
-	const scaleY = canvas.height / naturalH;
-	const coordSystem = ensureCoordSystem(result, 'normalized_0_1000');
-	const coordOrigin = ensureCoordOrigin(result, 'top-left');
+	return {
+		currentImage,
+		bitmap,
+		detections,
+		scaleX: canvas.width / naturalW,
+		scaleY: canvas.height / naturalH,
+		coordSystem: ensureCoordSystem(result, 'normalized_0_1000'),
+		coordOrigin: ensureCoordOrigin(result, 'top-left')
+	};
+}
 
-	// Define color palette for segmentation masks (similar to reference implementation)
-	const segmentationColors = [
-		[230, 25, 75],    // Red
-		[60, 180, 75],    // Green
-		[255, 225, 25],   // Yellow
-		[0, 130, 200],    // Blue
-		[245, 130, 48],   // Orange
-		[145, 30, 180],   // Purple
-		[70, 240, 240],   // Cyan
-		[240, 50, 230],   // Magenta
-		[191, 239, 69],   // Lime
-		[250, 190, 212]   // Pink
-	];
+function redrawBaseImage({ bitmap }) {
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+}
 
-	for (let idx = 0; idx < detections.length; idx++) {
-		const d = detections[idx];
-		const isHighlighted = highlightedDetectionId === d.id;
-		const color = colorForCategory(d.category);
-		const maskColor = segmentationColors[idx % segmentationColors.length];
-		const label = `${d.label ?? 'item'}${typeof d.confidence === 'number' ? ` (${(d.confidence*100).toFixed(0)}%)` : ''}`;
+function drawDetectionOverlay(detection, index, context) {
+	const color = colorForCategory(detection.category);
+	const label = buildDetectionLabel(detection);
+	const maskColor = SEGMENTATION_COLORS[index % SEGMENTATION_COLORS.length];
+	const highlight = highlightedDetectionId === detection.id;
 
-		// Draw with extra emphasis if highlighted
-		if (isHighlighted) {
-			ctx.save();
-			ctx.shadowColor = color;
-			ctx.shadowBlur = 15;
-		}
+	withHighlight(highlight, color, () => {
+		drawSegmentationLayer(detection, maskColor, index, context);
+		drawBoundingLayer(detection, label, color, context, highlight);
+		drawPolygonLayer(detection, label, color, context);
+		drawPointLayer(detection, label, color, context);
+	});
+}
 
-		// Draw segmentation mask first (as background layer)
-		if (d.mask && d.bbox) {
-			const b = toCanvasBox(
-				d.bbox,
-				coordSystem,
-				scaleX,
-				scaleY,
-				naturalW,
-				naturalH,
-				coordOrigin,
-				canvas.width,
-				canvas.height
-			);
-			if (b) {
-				const cacheKey = `${imageId}:${d.id ?? `mask-${idx}`}:${maskColor.join(',')}`;
-				drawMask(d.mask, b, maskColor, cacheKey);
-			}
-		}
-
-		// Draw bounding box
-		if (d.bbox) {
-			const b = toCanvasBox(
-				d.bbox,
-				coordSystem,
-				scaleX,
-				scaleY,
-				naturalW,
-				naturalH,
-				coordOrigin,
-				canvas.width,
-				canvas.height
-			);
-			if (b) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawBox(b, label, color);
-			}
-		}
-		
-		// Draw polygon
-		if (Array.isArray(d.polygon) && d.polygon.length >= 3) {
-			const pts = toCanvasPolygon(d.polygon, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin);
-			if (pts) {
-				if (isHighlighted) {
-					ctx.lineWidth = 4;
-				}
-				drawPolygon(pts, label, color);
-			}
-		}
-
-		// Draw points
-		if (Array.isArray(d.points) && d.points.length > 0) {
-			drawPoints(d.points, coordSystem, scaleX, scaleY, naturalW, naturalH, coordOrigin, label, color);
-		}
-
-		if (isHighlighted) {
-			ctx.restore();
-		}
+function buildDetectionLabel(detection) {
+	const base = detection.label ?? 'item';
+	if (typeof detection.confidence === 'number') {
+		return `${base} (${(detection.confidence * 100).toFixed(0)}%)`;
 	}
+	return base;
+}
+
+function withHighlight(isHighlighted, color, drawFn) {
+	if (!isHighlighted) {
+		drawFn();
+		return;
+	}
+	ctx.save();
+	ctx.shadowColor = color;
+	ctx.shadowBlur = 15;
+	ctx.lineWidth = 4;
+	try {
+		drawFn();
+	} finally {
+		ctx.restore();
+	}
+}
+
+function drawSegmentationLayer(detection, maskColor, index, context) {
+	if (!detection.mask || !detection.bbox) return;
+	const box = resolveCanvasBox(detection.bbox, context);
+	if (!box) return;
+	const cacheKey = `${context.currentImage.imageId}:${detection.id ?? `mask-${index}`}:${maskColor.join(',')}`;
+	drawMask(detection.mask, box, maskColor, cacheKey);
+}
+
+function drawBoundingLayer(detection, label, color, context, isHighlighted) {
+	if (!detection.bbox) return;
+	const box = resolveCanvasBox(detection.bbox, context);
+	if (!box) return;
+	drawBox(box, label, color, isHighlighted ? 4 : 2);
+}
+
+function drawPolygonLayer(detection, label, color, context) {
+	if (!Array.isArray(detection.polygon) || detection.polygon.length < 3) return;
+	const points = toCanvasPolygon(
+		detection.polygon,
+		context.coordSystem,
+		context.scaleX,
+		context.scaleY,
+		naturalW,
+		naturalH,
+		context.coordOrigin
+	);
+	if (!points) return;
+	drawPolygon(points, label, color);
+}
+
+function drawPointLayer(detection, label, color, context) {
+	if (!Array.isArray(detection.points) || detection.points.length === 0) return;
+	drawPoints(
+		detection.points,
+		context.coordSystem,
+		context.scaleX,
+		context.scaleY,
+		naturalW,
+		naturalH,
+		context.coordOrigin,
+		label,
+		color
+	);
+}
+
+function resolveCanvasBox(bbox, context) {
+	return toCanvasBox(
+		bbox,
+		context.coordSystem,
+		context.scaleX,
+		context.scaleY,
+		naturalW,
+		naturalH,
+		context.coordOrigin,
+		canvas.width,
+		canvas.height
+	);
 }
 
 function getStoredApiKey() {
@@ -369,9 +402,9 @@ function drawLabelBox(x, y, text) {
 	ctx.restore();
 }
 
-function drawBox(b, label, color) {
+function drawBox(b, label, color, lineWidth = 2) {
 	ctx.save();
-	ctx.lineWidth = 2;
+	ctx.lineWidth = lineWidth;
 	ctx.strokeStyle = color;
 	ctx.strokeRect(b.x, b.y, b.width, b.height);
 	drawLabelBox(b.x, b.y, label);
@@ -760,116 +793,112 @@ async function analyzeImageBatch(files) {
 }
 
 function renderSessionReport() {
-	if (!currentSession || !currentSession.sessionAggregates) return;
+	const session = currentSession;
+	if (!session || !session.sessionAggregates) return;
 
+	reportWrap.innerHTML = buildSessionReportMarkup(session);
+
+	bindSessionReportInteractions(session);
+	bindSessionNavigation(reportWrap, [
+		'.safety-image-chip',
+		'.session-insight-card',
+		'.session-progress-chip'
+	]);
+	bindSessionExportButtons(session);
+}
+
+function buildSessionReportMarkup(session) {
 	let html = '';
+	html += renderSessionSummary(session);
+	html += session.images.map((img, index) => renderSessionImagePanel(img, index)).join('');
+	return html;
+}
 
-	// Session summary (global panels)
-	html += renderSessionSummary(currentSession);
+function renderSessionImagePanel(img, index) {
+	const sectionId = `image-section-${img.imageId}`;
+	const detectionCount = Array.isArray(img.result?.detections) ? img.result.detections.length : null;
+	let body = '';
 
-	// Per-image sections (collapsed by default)
-	for (let i = 0; i < currentSession.images.length; i++) {
-		const img = currentSession.images[i];
-		const sectionId = `image-section-${img.imageId}`;
-		const detectionCount = Array.isArray(img.result?.detections) ? img.result.detections.length : null;
-		html += `<details class="session-image-panel" id="${sectionId}" data-image-id="${img.imageId}">`;
-		html += renderImageSectionHeader(img.imageId, img.fileName, i + 1, {
-			asSummary: true,
-			status: img.status,
-			detectionCount
-		});
-
-		if (img.status === 'completed' && img.result) {
-			html += '<div class="session-image-body">';
-			html += renderReportUI(img.result);
-			html += '</div>';
-		} else if (img.status === 'error') {
-			html += `<div class="session-image-body session-image-error">
-			<strong>Analysis failed:</strong> ${escapeHtml(img.error?.message || 'Unknown error')}
-		</div>`;
-		}
-
-		html += '</details>';
+	if (img.status === 'completed' && img.result) {
+		body = `<div class="session-image-body">${renderReportUI(img.result)}</div>`;
+	} else if (img.status === 'error') {
+		const errorMsg = escapeHtml(img.error?.message || 'Unknown error');
+		body = `<div class="session-image-body session-image-error">
+		<strong>Analysis failed:</strong> ${errorMsg}
+	</div>`;
 	}
 
-	reportWrap.innerHTML = html;
+	return `
+		<details class="session-image-panel" id="${sectionId}" data-image-id="${img.imageId}">
+			${renderImageSectionHeader(img.imageId, img.fileName, index + 1, {
+				asSummary: true,
+				status: img.status,
+				detectionCount
+			})}
+			${body}
+		</details>
+	`;
+}
 
-	// Setup interactions for all image sections
-	for (const img of currentSession.images) {
-		if (img.status === 'completed' && img.result) {
-			const detections = Array.isArray(img.result.detections) ? img.result.detections : [];
-			setupReportInteractions(
-				reportWrap,
-				detections,
-				(detection) => {
-					highlightedDetectionId = detection.id;
-					drawOverlays();
-				},
-				() => {
-					highlightedDetectionId = null;
-					drawOverlays();
-				}
-			);
-		}
+function bindSessionReportInteractions(session) {
+	for (const img of session.images) {
+		if (img.status !== 'completed' || !img.result) continue;
+		const detections = Array.isArray(img.result.detections) ? img.result.detections : [];
+		setupReportInteractions(
+			reportWrap,
+			detections,
+			(detection) => {
+				highlightedDetectionId = detection.id;
+				drawOverlays();
+			},
+			() => {
+				highlightedDetectionId = null;
+				drawOverlays();
+			}
+		);
 	}
+}
 
-	// Enable navigation via safety issue chips
-	reportWrap.querySelectorAll('.safety-image-chip').forEach(chip => {
-		if (chip.dataset.navBound === 'true') return;
-		chip.dataset.navBound = 'true';
-		chip.addEventListener('click', () => {
-			const imageId = chip.dataset.imageId;
-			if (!imageId) return;
-			const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
-			if (targetIndex >= 0) {
-				switchToImage(targetIndex);
-			}
-		});
+function bindSessionNavigation(container, selectors) {
+	selectors.forEach(selector => {
+		container.querySelectorAll(selector).forEach(el => bindNavigationTarget(el));
 	});
+}
 
-	reportWrap.querySelectorAll('.session-insight-card').forEach(card => {
-		if (card.dataset.navBound === 'true') return;
-		card.dataset.navBound = 'true';
-		card.addEventListener('click', () => {
-			const imageId = card.dataset.imageId;
-			if (!imageId) return;
-			const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
-			if (targetIndex >= 0) {
-				switchToImage(targetIndex);
-			}
-		});
+function bindNavigationTarget(element) {
+	if (!element || element.dataset.navBound === 'true') return;
+	element.dataset.navBound = 'true';
+	element.addEventListener('click', () => {
+		navigateToSessionImage(element.dataset.imageId);
 	});
+}
 
-	reportWrap.querySelectorAll('.session-progress-chip').forEach(chip => {
-		if (chip.dataset.navBound === 'true') return;
-		chip.dataset.navBound = 'true';
-		chip.addEventListener('click', () => {
-			const imageId = chip.dataset.imageId;
-			if (!imageId) return;
-			const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
-			if (targetIndex >= 0) {
-				switchToImage(targetIndex);
-			}
-		});
-	});
+function navigateToSessionImage(imageId) {
+	if (!imageId || !currentSession) return;
+	const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
+	if (targetIndex >= 0) {
+		switchToImage(targetIndex);
+	}
+}
 
-	// Setup export buttons
+
+function bindSessionExportButtons(session) {
 	const exportCSVBtn = document.getElementById('exportCSV');
 	const exportJSONBtn = document.getElementById('exportJSON');
 
-	if (exportCSVBtn) {
-		exportCSVBtn.addEventListener('click', () => {
-			const csv = exportSessionCSV(currentSession);
-			downloadFile(csv, `session_${currentSession.sessionId}.csv`, 'text/csv');
-		});
-	}
+	attachExportHandler(exportCSVBtn, 'text/csv', () => exportSessionCSV(session), session.sessionId);
+	attachExportHandler(exportJSONBtn, 'application/json', () => exportSessionJSON(session), session.sessionId);
+}
 
-	if (exportJSONBtn) {
-		exportJSONBtn.addEventListener('click', () => {
-			const json = exportSessionJSON(currentSession);
-			downloadFile(json, `session_${currentSession.sessionId}.json`, 'application/json');
-		});
-	}
+function attachExportHandler(button, mimeType, producer, sessionId) {
+	if (!button || button.dataset.navBound === 'true') return;
+	button.dataset.navBound = 'true';
+	button.addEventListener('click', () => {
+		const content = producer();
+		const fileSuffix = mimeType === 'text/csv' ? 'csv' : 'json';
+		const fileName = `session_${sessionId}.${fileSuffix}`;
+		downloadFile(content, fileName, mimeType);
+	});
 }
 
 function downloadFile(content, fileName, mimeType) {

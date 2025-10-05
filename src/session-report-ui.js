@@ -8,72 +8,108 @@ import { escapeHtml } from './ui-utils.js';
 export function renderSessionSummary(session) {
 	if (!session.sessionAggregates) return '';
 
-	const agg = session.sessionAggregates;
-	const safetyTotal = agg.totalSafetyIssues;
-	const safetyHigh = agg.safetyBySeverity.high || 0;
-	const safetyMed = agg.safetyBySeverity.medium || 0;
-	const safetyLow = agg.safetyBySeverity.low || 0;
-	const aggregateCharts = renderSessionAggregateCharts(agg);
-	const progressSummary = agg.progressSummary || {
-		totalEntries: 0,
-		averagePercent: null,
-		byImage: [],
-		phaseCounts: []
-	};
-	const overallProgressPercent = Number.isFinite(progressSummary.averagePercent)
-		? Math.round(progressSummary.averagePercent)
-		: null;
-	const globalInsights = collectSessionGlobalInsights(session);
-	const insightsPanel = renderSessionGlobalInsights(globalInsights.filter(insight => insight.category !== 'progress'));
-	const progressPanel = renderSessionProgressPanel(progressSummary);
+	const context = buildSessionSummaryContext(session);
+	const cards = renderSummaryCards(session, context);
+	const safetyBreakdown = renderSafetyBreakdown(context.agg);
+	const heatmap = renderImagesSafetyHeatmap(context.agg.imagesSafety);
+	const progressPanel = renderSessionProgressPanel(context.progressSummary);
+	const charts = renderSessionAggregateCharts(context.agg);
+	const insights = renderSessionGlobalInsights(context.nonProgressInsights);
 
 	return `
 		<div class="session-summary">
 			<h2>📊 Session Summary</h2>
-			<div class="summary-grid">
-				<div class="summary-card">
-					<div class="summary-card-value">${session.totalImages}</div>
-					<div class="summary-card-label">Total Images</div>
-				</div>
-				<div class="summary-card">
-					<div class="summary-card-value">${session.completedImages}</div>
-					<div class="summary-card-label">Successfully Analyzed</div>
-				</div>
-				<div class="summary-card">
-					<div class="summary-card-value">${agg.totalDetections}</div>
-					<div class="summary-card-label">Total Detections</div>
-				</div>
-				<div class="summary-card">
-					<div class="summary-card-value" style="color:${safetyTotal > 0 ? '#ff4444' : '#44ff88'}">${safetyTotal}</div>
-					<div class="summary-card-label">Safety Issues</div>
-				</div>
-				${progressSummary.totalEntries > 0 || Number.isFinite(progressSummary.averagePercent) ? `
-				<div class="summary-card">
-					<div class="summary-card-value">${overallProgressPercent != null ? `${overallProgressPercent}%` : '—'}</div>
-					<div class="summary-card-label">Overall Progress</div>
-				</div>
-				` : ''}
-			</div>
-
-			${safetyTotal > 0 ? `
-				<div style="margin-top:16px; padding:12px; background:#1a0f0f; border:1px solid #4a2020; border-radius:8px;">
-					<div style="font-weight:600; margin-bottom:8px; color:#ff4444;">Safety Issues Breakdown</div>
-					<div style="display:flex; gap:16px; flex-wrap:wrap;">
-						<div><span style="color:#ff4444; font-weight:600;">${safetyHigh}</span> High</div>
-						<div><span style="color:#ffaa44; font-weight:600;">${safetyMed}</span> Medium</div>
-						<div><span style="color:#ffdd44; font-weight:600;">${safetyLow}</span> Low</div>
-					</div>
-				</div>
-			` : ''}
-
-			${renderImagesSafetyHeatmap(agg.imagesSafety)}
+			${cards}
+			${safetyBreakdown}
+			${heatmap}
 			${progressPanel}
-			${aggregateCharts}
-			${insightsPanel}
-
+			${charts}
+			${insights}
 			<div class="export-buttons">
 				<button class="export-btn" id="exportCSV">📥 Export CSV</button>
 				<button class="export-btn" id="exportJSON">📥 Export JSON</button>
+			</div>
+		</div>
+	`;
+}
+
+function buildSessionSummaryContext(session) {
+	const agg = session.sessionAggregates;
+	const progressSummary = normalizeProgressSummary(agg.progressSummary);
+	const overallPercent = Number.isFinite(progressSummary.averagePercent)
+		? Math.round(progressSummary.averagePercent)
+		: null;
+	const globalInsights = collectSessionGlobalInsights(session);
+	return {
+		agg,
+		progressSummary,
+		overallProgressPercent: overallPercent,
+		nonProgressInsights: globalInsights.filter(insight => insight.category !== 'progress')
+	};
+}
+
+function normalizeProgressSummary(summary) {
+	return summary || {
+		totalEntries: 0,
+		averagePercent: null,
+		byImage: [],
+		phaseCounts: [],
+		sourceCounts: {}
+	};
+}
+
+function renderSummaryCards(session, context) {
+	const cards = [
+		renderSummaryCard(session.totalImages, 'Total Images'),
+		renderSummaryCard(session.completedImages, 'Successfully Analyzed'),
+		renderSummaryCard(context.agg.totalDetections, 'Total Detections'),
+		renderSafetySummaryCard(context.agg.totalSafetyIssues)
+	];
+
+	if (shouldShowProgressCard(context.progressSummary)) {
+		const label = context.overallProgressPercent != null ? `${context.overallProgressPercent}%` : '—';
+		cards.push(renderSummaryCard(label, 'Overall Progress'));
+	}
+
+	return `<div class="summary-grid">${cards.join('')}</div>`;
+}
+
+function renderSummaryCard(value, label) {
+	return `
+		<div class="summary-card">
+			<div class="summary-card-value">${value}</div>
+			<div class="summary-card-label">${label}</div>
+		</div>
+	`;
+}
+
+function renderSafetySummaryCard(total) {
+	const color = total > 0 ? '#ff4444' : '#44ff88';
+	return `
+		<div class="summary-card">
+			<div class="summary-card-value" style="color:${color}">${total}</div>
+			<div class="summary-card-label">Safety Issues</div>
+		</div>
+	`;
+}
+
+function shouldShowProgressCard(progressSummary) {
+	return progressSummary.totalEntries > 0 || Number.isFinite(progressSummary.averagePercent);
+}
+
+function renderSafetyBreakdown(agg) {
+	const total = agg.totalSafetyIssues;
+	if (total === 0) return '';
+	const high = agg.safetyBySeverity.high || 0;
+	const medium = agg.safetyBySeverity.medium || 0;
+	const low = agg.safetyBySeverity.low || 0;
+	return `
+		<div style="margin-top:16px; padding:12px; background:#1a0f0f; border:1px solid #4a2020; border-radius:8px;">
+			<div style="font-weight:600; margin-bottom:8px; color:#ff4444;">Safety Issues Breakdown</div>
+			<div style="display:flex; gap:16px; flex-wrap:wrap;">
+				<div><span style="color:#ff4444; font-weight:600;">${high}</span> High</div>
+				<div><span style="color:#ffaa44; font-weight:600;">${medium}</span> Medium</div>
+				<div><span style="color:#ffdd44; font-weight:600;">${low}</span> Low</div>
 			</div>
 		</div>
 	`;
@@ -181,44 +217,78 @@ function renderSessionAggregateCharts(agg) {
 	}
 
 	return `${html}</div>`;
-}
-
-function renderSessionProgressPanel(progressSummary) {
-	if (!progressSummary) return '';
-	const hasPercent = Number.isFinite(progressSummary.averagePercent);
-	const roundedPercent = hasPercent ? Math.round(progressSummary.averagePercent) : null;
-	const barWidth = hasPercent ? Math.max(0, Math.min(100, roundedPercent)) : 0;
-	const imageChips = Array.isArray(progressSummary.byImage)
-		? progressSummary.byImage
-			.filter(img => Number.isFinite(img.averagePercent))
-			.slice(0, 4)
-			.map(img => {
-				const pct = Math.round(img.averagePercent);
-				return `<span class="session-progress-chip" data-image-id="${img.imageId}">Image ${img.imageNumber} • ${pct}%</span>`;
-			})
-			.join('')
-		: '';
-	const phaseTags = Array.isArray(progressSummary.phaseCounts)
-		? progressSummary.phaseCounts.slice(0, 4).map(phase => `<span class="session-progress-phase">${escapeHtml(phase.name)} (${phase.count})</span>`).join(' ')
-		: '';
-
-	if (!hasPercent && !phaseTags && !imageChips) {
-		return '';
 	}
 
+	function renderSessionProgressPanel(progressSummary) {
+		if (!progressSummary) return '';
+	const context = buildProgressPanelContext(progressSummary);
+	if (!context.shouldRender) return '';
 	return `
 		<div class="session-progress-panel">
-			<div class="session-progress-header">
-				<span class="session-panel-title">Overall Progress</span>
-				<span class="session-progress-value">${hasPercent ? `${roundedPercent}% complete` : 'Progress signals detected'}</span>
-			</div>
-			<div class="session-progress-bar-bg">
-				<div class="session-progress-bar-fill" style="width:${barWidth}%"></div>
-			</div>
-			${phaseTags ? `<div class="session-progress-phases">Top phases: ${phaseTags}</div>` : ''}
-			${imageChips ? `<div class="session-progress-images">${imageChips}</div>` : ''}
+			${renderProgressHeader(context)}
+			${renderProgressBar(context)}
+			${context.phaseTags ? `<div class="session-progress-phases">Top phases: ${context.phaseTags}</div>` : ''}
+			${context.imageChips ? `<div class="session-progress-images">${context.imageChips}</div>` : ''}
 		</div>
 	`;
+}
+
+function buildProgressPanelContext(progressSummary) {
+	const hasPercent = Number.isFinite(progressSummary.averagePercent);
+	const roundedPercent = hasPercent ? Math.round(progressSummary.averagePercent) : null;
+	const barWidth = hasPercent ? clampPercent(roundedPercent) : 0;
+	const phaseTags = buildProgressPhaseTags(progressSummary.phaseCounts);
+	const imageChips = buildProgressImageChips(progressSummary.byImage);
+	return {
+		hasPercent,
+		roundedPercent,
+		barWidth,
+		phaseTags,
+		imageChips,
+		shouldRender: hasPercent || Boolean(phaseTags) || Boolean(imageChips)
+	};
+}
+
+function renderProgressHeader(context) {
+	const label = context.hasPercent ? `${context.roundedPercent}% complete` : 'Progress signals detected';
+	return `
+		<div class="session-progress-header">
+			<span class="session-panel-title">Overall Progress</span>
+			<span class="session-progress-value">${label}</span>
+		</div>
+	`;
+}
+
+function renderProgressBar(context) {
+	return `
+		<div class="session-progress-bar-bg">
+			<div class="session-progress-bar-fill" style="width:${context.barWidth}%"></div>
+		</div>
+	`;
+}
+
+function clampPercent(value) {
+	return Math.max(0, Math.min(100, value ?? 0));
+}
+
+function buildProgressPhaseTags(phases) {
+	if (!Array.isArray(phases) || phases.length === 0) return '';
+	return phases
+		.slice(0, 4)
+		.map(phase => `<span class="session-progress-phase">${escapeHtml(phase.name)} (${phase.count})</span>`)
+		.join(' ');
+}
+
+function buildProgressImageChips(images) {
+	if (!Array.isArray(images) || images.length === 0) return '';
+	return images
+		.filter(img => Number.isFinite(img.averagePercent))
+		.slice(0, 4)
+		.map(img => {
+			const pct = Math.round(img.averagePercent);
+			return `<span class="session-progress-chip" data-image-id="${img.imageId}">Image ${img.imageNumber} • ${pct}%</span>`;
+		})
+		.join('');
 }
 
 function collectSessionGlobalInsights(session) {
