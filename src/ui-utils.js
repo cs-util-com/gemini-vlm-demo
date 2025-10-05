@@ -300,7 +300,12 @@ function repairTruncatedStrings(source) {
 			if (stringStart < 0) {
 				return output;
 			}
+			const propertyName = findPropertyNameBefore(output, stringStart);
 			const rawValue = output.slice(stringStart + 1, position);
+			if (shouldBlankTruncatedString(propertyName, rawValue)) {
+				output = `${output.slice(0, stringStart)}""${output.slice(position)}`;
+				continue;
+			}
 			const cleanedValue = rawValue.replace(/[\r\n]+/g, ' ').trim();
 			const maxLen = 160;
 			const truncatedValue = cleanedValue.slice(0, maxLen);
@@ -331,6 +336,53 @@ function findUnescapedQuoteBefore(source, index) {
 		}
 	}
 	return -1;
+}
+
+function findPropertyNameBefore(source, stringStart) {
+	let cursor = stringStart - 1;
+	while (cursor >= 0 && /\s/.test(source[cursor])) cursor--;
+	if (cursor < 0 || source[cursor] !== ':') return null;
+	cursor--;
+	while (cursor >= 0 && /\s/.test(source[cursor])) cursor--;
+	if (cursor < 0 || source[cursor] !== '"') return null;
+	let end = cursor;
+	cursor--;
+	let escaped = false;
+	while (cursor >= 0) {
+		const ch = source[cursor];
+		if (escaped) {
+			escaped = false;
+			cursor--;
+			continue;
+		}
+		if (ch === '\\') {
+			escaped = true;
+			cursor--;
+			continue;
+		}
+		if (ch === '"') {
+			return source.slice(cursor + 1, end);
+		}
+		cursor--;
+	}
+	return null;
+}
+
+function shouldBlankTruncatedString(propertyName, rawValue) {
+	const value = typeof rawValue === 'string' ? rawValue : '';
+	if (value.startsWith('data:')) {
+		return true;
+	}
+	const stripped = value.replace(/\s+/g, '');
+	if (stripped.length > 80 && /^[A-Za-z0-9+/=]+$/.test(stripped)) {
+		return true;
+	}
+	if (!propertyName) return false;
+	const lowered = propertyName.toLowerCase();
+	if (lowered.includes('mask') || lowered.includes('data') || lowered.includes('image') || lowered.includes('asset') || lowered.includes('base64') || lowered.includes('url')) {
+		return true;
+	}
+	return false;
 }
 
 function escapeJsonString(value) {
@@ -487,30 +539,44 @@ function gatherMaskAssetMap(parsed) {
 	return Object.keys(collected).length > 0 ? collected : null;
 }
 
-function normalizeStringAsset(asset, fallbackMime) {
+function normalizeStringAsset(asset, fallbackMime, warnings, contextLabel) {
 	if (typeof asset !== 'string' || asset.length === 0) return null;
-	if (asset.startsWith('data:')) return asset;
-	return isLikelyBase64String(asset) ? toDataUrl(asset, fallbackMime) : null;
+	if (asset.startsWith('data:')) {
+		return validateMaskDataUrl(asset, warnings, contextLabel);
+	}
+	if (isLikelyBase64String(asset)) {
+		const dataUrl = toDataUrl(asset, fallbackMime);
+		return validateMaskDataUrl(dataUrl, warnings, contextLabel);
+	}
+	return null;
 }
 
-function normalizeInlineDataAsset(asset, fallbackMime) {
+function normalizeInlineDataAsset(asset, fallbackMime, warnings, contextLabel) {
 	const inline = asset.inline_data || asset.inlineData;
 	if (!inline || typeof inline !== 'object') return null;
 	const data = inline.data || inline.base64 || inline.bytes;
 	if (typeof data !== 'string' || data.length === 0) return null;
 	const mime = inline.mime_type || inline.mimeType || fallbackMime;
-	return toDataUrl(data, mime);
+	const dataUrl = toDataUrl(data, mime);
+	return validateMaskDataUrl(dataUrl, warnings, contextLabel);
 }
 
-function normalizeDirectDataAsset(asset, fallbackMime) {
+function normalizeDirectDataAsset(asset, fallbackMime, warnings, contextLabel) {
 	const directKeys = ['data', 'base64', 'bytes', 'png', 'png_base64', 'pngBase64'];
 	for (const key of directKeys) {
 		const value = asset[key];
 		if (typeof value !== 'string' || value.length === 0) continue;
-		if (value.startsWith('data:')) return value;
+		if (value.startsWith('data:')) {
+			const validated = validateMaskDataUrl(value, warnings, contextLabel);
+			if (validated) {
+				return validated;
+			}
+			continue;
+		}
 		if (isLikelyBase64String(value)) {
 			const mime = asset.mime_type || asset.mimeType || fallbackMime;
-			return toDataUrl(value, mime);
+			const dataUrl = toDataUrl(value, mime);
+			return validateMaskDataUrl(dataUrl, warnings, contextLabel);
 		}
 	}
 	return null;
@@ -521,29 +587,111 @@ function normalizeUrlAsset(asset) {
 	return typeof url === 'string' && url.length > 0 ? url : null;
 }
 
-function normalizeMaskAssetValue(asset, fallbackMime = 'image/png') {
+function normalizeMaskAssetValue(asset, fallbackMime = 'image/png', warnings, contextLabel) {
 	if (!asset) return null;
 	if (typeof asset === 'string') {
-		return normalizeStringAsset(asset, fallbackMime);
+		return normalizeStringAsset(asset, fallbackMime, warnings, contextLabel);
 	}
 	if (typeof asset !== 'object') return null;
-	return normalizeInlineDataAsset(asset, fallbackMime)
-		|| normalizeDirectDataAsset(asset, fallbackMime)
+	return normalizeInlineDataAsset(asset, fallbackMime, warnings, contextLabel)
+		|| normalizeDirectDataAsset(asset, fallbackMime, warnings, contextLabel)
 		|| normalizeUrlAsset(asset);
 }
 
-function resolveMaskValue(maskValue, maskAssets) {
+function validateMaskDataUrl(dataUrl, warnings, contextLabel) {
+	if (typeof dataUrl !== 'string' || dataUrl.length === 0) return null;
+	const base64Match = /^data:([^;]+);base64,(.*)$/i.exec(dataUrl);
+	if (!base64Match) {
+		return dataUrl;
+	}
+	const base64 = base64Match[2].replace(/\s+/g, '');
+	let bytes;
+	try {
+		bytes = decodeBase64ToBytes(base64);
+	} catch (err) {
+		pushMaskWarning(warnings, `Failed to decode base64 (${err?.message || 'unknown error'})`, contextLabel);
+		return null;
+	}
+	if (!bytes || bytes.length < 4) {
+		pushMaskWarning(warnings, 'Decoded base64 was too short to be an image', contextLabel);
+		return null;
+	}
+	if (isLikelyBinaryImage(bytes)) {
+		return dataUrl;
+	}
+	const ascii = getAsciiSample(bytes);
+	pushMaskWarning(warnings, `Decoded data looked non-image (starts with "${ascii}")`, contextLabel);
+	return null;
+}
+
+function decodeBase64ToBytes(base64) {
+	if (typeof Buffer !== 'undefined') {
+		return Uint8Array.from(Buffer.from(base64, 'base64'));
+	}
+	if (typeof globalThis.atob === 'function') {
+		const binary = globalThis.atob(base64);
+		const len = binary.length;
+		const bytes = new Uint8Array(len);
+		for (let i = 0; i < len; i++) {
+			bytes[i] = binary.charCodeAt(i);
+		}
+		return bytes;
+	}
+	throw new Error('Base64 decoding not supported in this environment');
+}
+
+function isLikelyBinaryImage(bytes) {
+	if (!bytes || bytes.length < 4) return false;
+	const b0 = bytes[0];
+	const b1 = bytes[1];
+	const b2 = bytes[2];
+	const b3 = bytes[3];
+	// PNG signature: 89 50 4E 47
+	if (b0 === 0x89 && b1 === 0x50 && b2 === 0x4e && b3 === 0x47) return true;
+	// JPEG signature: FF D8
+	if (b0 === 0xff && b1 === 0xd8) return true;
+	// GIF signature: GIF8
+	if (b0 === 0x47 && b1 === 0x49 && b2 === 0x46 && b3 === 0x38) return true;
+	// WebP/RIFF signature
+	if (b0 === 0x52 && b1 === 0x49 && b2 === 0x46 && b3 === 0x46) return true;
+	return false;
+}
+
+function getAsciiSample(bytes, length = 32) {
+	const sliceLen = Math.min(bytes.length, length);
+	let result = '';
+	for (let i = 0; i < sliceLen; i++) {
+		const code = bytes[i];
+		if (code >= 32 && code <= 126) {
+			result += String.fromCharCode(code);
+		} else {
+			result += '.';
+		}
+	}
+	return result.trim() || '(binary)';
+}
+
+function pushMaskWarning(warnings, message, contextLabel) {
+	if (!Array.isArray(warnings)) return;
+	if (contextLabel) {
+		warnings.push(`${contextLabel}: ${message}`);
+	} else {
+		warnings.push(message);
+	}
+}
+
+function resolveMaskValue(maskValue, maskAssets, warnings, contextLabel) {
 	if (!maskValue) return null;
 	if (typeof maskValue === 'string') {
-		const normalized = normalizeStringAsset(maskValue);
+		const normalized = normalizeStringAsset(maskValue, 'image/png', warnings, contextLabel);
 		if (normalized) {
 			return normalized;
 		}
 		const asset = maskAssets?.[maskValue];
-		return normalizeMaskAssetValue(asset);
+		return normalizeMaskAssetValue(asset, 'image/png', warnings, `${contextLabel ?? 'mask asset'} (${maskValue})`);
 	}
 	if (typeof maskValue === 'object') {
-		return normalizeMaskAssetValue(maskValue);
+		return normalizeMaskAssetValue(maskValue, 'image/png', warnings, contextLabel);
 	}
 	return null;
 }
@@ -570,8 +718,9 @@ export function transformResponseFormat(parsed) {
 			const rawMasks = Array.isArray(item.masks)
 				? item.masks.filter(mask => mask != null)
 				: (item.mask != null ? [item.mask] : []);
+			const maskWarnings = [];
 			const resolvedMasks = rawMasks
-				.map(maskValue => resolveMaskValue(maskValue, maskAssets))
+				.map((maskValue, maskIdx) => resolveMaskValue(maskValue, maskAssets, maskWarnings, `detection ${idx} mask ${maskIdx}`))
 				.filter(Boolean);
 			const detection = {
 				id: item.id || `det_${idx}`,
@@ -586,6 +735,9 @@ export function transformResponseFormat(parsed) {
 			if (resolvedMasks.length > 0) {
 				detection.mask = resolvedMasks[0];
 				detection.masks = resolvedMasks;
+			}
+			if (maskWarnings.length > 0) {
+				detection.maskWarnings = maskWarnings;
 			}
 
 			if (item.safety && typeof item.safety === 'object') {

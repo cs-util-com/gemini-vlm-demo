@@ -9,6 +9,12 @@ import {
 	transformResponseFormat
 } from './ui-utils.js';
 
+const SAMPLE_BASE64_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nxiAAAAAASUVORK5CYII=';
+const SAMPLE_BASE64_GIF = 'R0lGODdhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const SAMPLE_BASE64_WEBP = 'UklGRiIAAABXRUJQVlA4ICAAAADwAQCdASoIAAgAAkA0JaQAA3AA/vuUAAA=';
+const SAMPLE_BASE64_JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAUDBAUEBQUGBQgGBQYIBwgICAcKCwoKCgsOCQwNDhIQERMTFBQTGB4YGhscHCEjJCQnJyorLzIyGy8zODMsNyguLisBCgoKDQ0NDg0NDisZHxkrLS0rLS0rLS0rLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tKy0tLS0tLS0tLf/AABEIAKgBLAMBIgACEQEDEQH/xABGAAADAQEAAAAAAAAAAAAAAAABAwQFAQEAAAAAAAAAAAAAAAAAAAIDEAACAgEFAQEAAAAAAAAAAAABAgMRAAQSEyExQVEiMhEAAQMDBQYGAwAAAAAAAAAAAQACEQMhEkEFEyIxgbHwFDJRYWGR0TLhMhQSAQAAAAAAAAAAAAAAAAAAABD/2gAMAwEAAhEDEQA/AOaWb60VBZrfMQz/AP/Z';
+const NON_IMAGE_DATA_URL = `data:image/png;base64,${Buffer.from('{"version":"1.0","data":"not an actual mask"}').toString('base64')}`;
+
 describe('colorForCategory', () => {
 	it('returns correct color for safety_issue', () => {
 		expect(colorForCategory('safety_issue')).toBe('#ff5b5b');
@@ -235,6 +241,25 @@ describe('extractJSONFromResponse', () => {
 		expect(result.items).toHaveLength(1);
 		expect(result.items[0].progress.phase).toContain('rough-in/early fit-out');
 		expect(result.items[0].progress.phase).toContain('(truncated)');
+	});
+
+	it('drops invalid mask payloads to avoid non-image data', () => {
+		const payload = `{"items":[{"label":"panel","category":"facility_asset","masks":["${NON_IMAGE_DATA_URL}"],"box_2d":[0,0,1,1]}]}`;
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: payload }]
+				}
+			}]
+		};
+
+		const parsed = extractJSONFromResponse(resp);
+		const transformed = transformResponseFormat(parsed);
+		const detection = transformed.detections[0];
+		expect(detection.mask).toBeUndefined();
+		expect(detection.masks).toBeUndefined();
+		expect(detection.maskWarnings).toBeDefined();
+		expect(detection.maskWarnings[0]).toContain('non-image');
 	});
 
 	it('augments errors with debug metadata when parsing fails', () => {
@@ -535,7 +560,7 @@ describe('transformResponseFormat', () => {
 					box_2d: [100, 200, 300, 400],
 					category: 'object',
 					confidence: 0.95,
-					masks: ['iVBORw0KGgoAAAANSUhEUgAAAAUA' + 'A'.repeat(64)]
+					masks: [SAMPLE_BASE64_PNG]
 				}
 			]
 		};
@@ -588,7 +613,7 @@ describe('transformResponseFormat', () => {
 				}
 			],
 			mask_assets: {
-				mask_1: 'iVBORw0KGgoAAAANSUhEUgAAAAUA' + 'A'.repeat(64)
+				mask_1: SAMPLE_BASE64_PNG
 			}
 		};
 
@@ -605,8 +630,8 @@ describe('transformResponseFormat', () => {
 					box_2d: [1, 2, 3, 4],
 					masks: [{
 						inline_data: {
-							mime_type: 'image/webp',
-							data: 'TWFuIGlzIGRpc3Rpbmd1aXNoZWQ=' 
+							mime_type: 'image/png',
+							data: SAMPLE_BASE64_PNG
 						}
 					}]
 				}
@@ -614,7 +639,7 @@ describe('transformResponseFormat', () => {
 		};
 
 		const result = transformResponseFormat(input);
-		expect(result.detections[0]).toHaveProperty('mask', 'data:image/webp;base64,TWFuIGlzIGRpc3Rpbmd1aXNoZWQ=');
+		expect(result.detections[0]).toHaveProperty('mask', `data:image/png;base64,${SAMPLE_BASE64_PNG}`);
 	});
 
 	it('omits mask when unable to resolve placeholder', () => {
@@ -747,7 +772,7 @@ describe('transformResponseFormat', () => {
 	});
 
 	it('gathers mask assets from multiple sources', () => {
-		const base = 'A'.repeat(64);
+		const base = SAMPLE_BASE64_PNG;
 		const input = {
 			items: [
 				{
@@ -795,12 +820,12 @@ describe('transformResponseFormat', () => {
 	});
 
 	it('normalizes diverse mask representations', () => {
-		const baseInline = 'A'.repeat(64);
-		const basePng = 'B'.repeat(64);
-		const baseAsset = 'C'.repeat(64);
-		const basePngBase64 = 'D'.repeat(64);
-		const baseBytes = 'E'.repeat(64);
-		const dataUrl = 'data:image/png;base64,alreadyEncoded==';
+		const baseInline = SAMPLE_BASE64_GIF;
+		const basePng = SAMPLE_BASE64_PNG;
+		const baseAsset = SAMPLE_BASE64_JPEG;
+		const basePngBase64 = SAMPLE_BASE64_PNG;
+		const baseBytes = SAMPLE_BASE64_WEBP;
+		const dataUrl = `data:image/png;base64,${SAMPLE_BASE64_PNG}`;
 		const input = {
 			items: [
 				{ labels: ['dataUrl'], box_2d: [1, 1, 2, 2], mask: dataUrl },
@@ -849,9 +874,9 @@ describe('transformResponseFormat', () => {
 
 	it('handles malformed mask assets gracefully', () => {
 		const invalidCharMask = '@'.repeat(40);
-		const inlineBase64 = 'F'.repeat(64);
-		const inlineBytes = 'G'.repeat(64);
-		const dataUrlAsset = 'data:image/png;base64,ZXhhbXBsZWRhdGE=';
+		const inlineBase64 = SAMPLE_BASE64_JPEG;
+		const inlineBytes = SAMPLE_BASE64_WEBP;
+		const dataUrlAsset = `data:image/png;base64,${SAMPLE_BASE64_PNG}`;
 		const input = {
 			items: [
 				{ labels: ['broken'], box_2d: [0, 1, 2, 3], mask: invalidCharMask },

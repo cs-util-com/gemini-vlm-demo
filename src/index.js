@@ -120,6 +120,18 @@ function drawOverlays() {
 			ctx.shadowBlur = 15;
 		}
 
+		const maskWarnings = Array.isArray(d.maskWarnings) ? d.maskWarnings : null;
+		if ((!d.mask || !d.bbox) && maskWarnings && maskWarnings.length > 0) {
+			console.warn('Skipping segmentation mask due to invalid asset', {
+				imageId,
+				fileName: currentImage.fileName,
+				detectionId: d.id ?? null,
+				detectionLabel: d.label ?? null,
+				detectionCategory: d.category ?? null,
+				warnings: maskWarnings
+			});
+		}
+
 		// Draw segmentation mask first (as background layer)
 		if (d.mask && d.bbox) {
 			const b = toCanvasBox(
@@ -142,7 +154,8 @@ function drawOverlays() {
 					detectionLabel: d.label ?? null,
 					detectionCategory: d.category ?? null,
 					detectionIndex: idx,
-					maskCount: Array.isArray(d.masks) ? d.masks.length : null
+					maskCount: Array.isArray(d.masks) ? d.masks.length : null,
+					maskWarnings
 				};
 				drawMask(d.mask, b, maskColor, cacheKey, maskContext);
 			}
@@ -433,7 +446,8 @@ function drawMask(maskSource, boundingBox, rgbColor, cacheKey, context = null) {
 			detectionLabel: context?.detectionLabel ?? null,
 			detectionCategory: context?.detectionCategory ?? null,
 			detectionIndex: context?.detectionIndex ?? null,
-			maskCount: context?.maskCount ?? null
+			maskCount: context?.maskCount ?? null,
+			maskWarnings: context?.maskWarnings ?? null
 		});
 	};
 
