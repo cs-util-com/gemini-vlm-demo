@@ -362,6 +362,43 @@ describe('session-manager', () => {
 			expect(summary.phaseCounts.find(phase => phase.name === 'Drywall')?.count).toBe(1);
 		});
 
+		it('increments repeated phase counts and skips insights without usable metrics', () => {
+			const session = createSession([{ name: 'tower.jpg' }]);
+
+			updateImageStatus(session, 'img_001', 'completed', {
+				detections: [
+					{
+						id: 'd1',
+						label: 'Core level 5',
+						category: 'progress',
+						progress: { phase: 'Structure', percentComplete: 20 }
+					},
+					{
+						id: 'd2',
+						label: 'Core level 6',
+						category: 'progress',
+						progress: { phase: 'Structure', percentComplete: 40 }
+					}
+				],
+				global_insights: [
+					{
+						category: 'progress',
+						name: 'Schedule check',
+						metrics: [{ key: 'duration_days', value: 12 }]
+					}
+				]
+			});
+
+			const aggregates = calculateSessionAggregates(session);
+			const summary = aggregates.progressSummary;
+
+			const structurePhase = summary.phaseCounts.find(phase => phase.name === 'Structure');
+			expect(structurePhase?.count).toBe(2);
+			expect(summary.totalEntries).toBe(2);
+			expect(summary.sourceCounts.detection).toBe(2);
+			expect(summary.sourceCounts.insight).toBe(0);
+		});
+
 			it('should fill in defaults when detection metadata is missing', () => {
 				const session = createSession([{ name: 'img1.jpg' }]);
 

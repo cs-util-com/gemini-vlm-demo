@@ -102,7 +102,7 @@ describe('extractJSONFromResponse', () => {
 	});
 
 	it('strips truncated mask data so remaining fields can be parsed', () => {
-		const truncated = '{"items":[{"label":"skylight","box_2d":[0,482,453,997],"category":"facility_asset","mask":"\\u003cstart_of_mask\\u003eABC';
+		const truncated = '{"items":[{"label":"skylight","box_2d":[0,482,453,997],"category":"facility_asset","masks":["\u003cstart_of_mask\u003eABC"';
 		const resp = {
 			candidates: [{
 				content: {
@@ -118,14 +118,14 @@ describe('extractJSONFromResponse', () => {
 					label: 'skylight',
 					box_2d: [0, 482, 453, 997],
 					category: 'facility_asset',
-					mask: null
+					masks: []
 				}
 			]
 		});
 	});
 
 	it('recovers from truncated mask asset object payloads', () => {
-		const truncated = '{"items":[{"label":"panel","category":"object","mask":{"inline_data":{"mime_type":"image/png","data":"AAA';
+		const truncated = '{"items":[{"label":"panel","category":"object","masks":[{"inline_data":{"mime_type":"image/png","data":"AAA"}';
 		const resp = {
 			candidates: [{
 				content: {
@@ -140,18 +140,58 @@ describe('extractJSONFromResponse', () => {
 				{
 					label: 'panel',
 					category: 'object',
-					mask: null
+					masks: []
 				}
 			]
 		});
 	});
 
 	it('appends missing closing brackets when mask was otherwise valid', () => {
-		const missingRootBrace = '{"items":[{"mask":"\\u003cstart_of_mask\\u003eAAAA"}]';
+		const missingRootBrace = '{"items":[{"masks":["\u003cstart_of_mask\u003eAAAA"]}]';
 		const resp = {
 			candidates: [{
 				content: {
 					parts: [{ text: missingRootBrace }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					masks: []
+				}
+			]
+		});
+	});
+
+	it('retains valid masks arrays without modification', () => {
+		const valid = '{"items":[{"masks":["data:image/png;base64,AAAA"]}] }';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: valid }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result).toEqual({
+			items: [
+				{
+					masks: ['data:image/png;base64,AAAA']
+				}
+			]
+		});
+	});
+
+	it('cleans legacy mask keys for backwards compatibility', () => {
+		const truncated = '{"items":[{"mask":"\u003cstart_of_mask\u003eAAAA"}]';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: truncated }]
 				}
 			}]
 		};
@@ -420,7 +460,8 @@ describe('transformResponseFormat', () => {
 					labels: ['ladder', 'equipment'],
 					box_2d: [100, 200, 300, 400],
 					category: 'object',
-					confidence: 0.95
+					confidence: 0.95,
+					masks: ['iVBORw0KGgoAAAANSUhEUgAAAAUA' + 'A'.repeat(64)]
 				}
 			]
 		};
@@ -450,7 +491,7 @@ describe('transformResponseFormat', () => {
 				{
 					labels: ['person', 'worker'],
 					box_2d: [10, 20, 30, 40],
-					mask: base64,
+					masks: [base64],
 					confidence: 0.9
 				}
 			]
@@ -459,6 +500,8 @@ describe('transformResponseFormat', () => {
 		const result = transformResponseFormat(input);
 		
 		expect(result.detections[0]).toHaveProperty('mask', `data:image/png;base64,${base64}`);
+		expect(result.detections[0]).toHaveProperty('masks');
+		expect(result.detections[0].masks[0]).toBe(`data:image/png;base64,${base64}`);
 	});
 
 	it('resolves mask references from mask_assets map', () => {
@@ -467,7 +510,7 @@ describe('transformResponseFormat', () => {
 				{
 					labels: ['helmet', 'ppe'],
 					box_2d: [5, 10, 15, 20],
-					mask: 'mask_1'
+					masks: ['mask_1']
 				}
 			],
 			mask_assets: {
@@ -486,12 +529,12 @@ describe('transformResponseFormat', () => {
 				{
 					labels: ['cone', 'safety marker'],
 					box_2d: [1, 2, 3, 4],
-					mask: {
+					masks: [{
 						inline_data: {
 							mime_type: 'image/webp',
 							data: 'TWFuIGlzIGRpc3Rpbmd1aXNoZWQ=' 
 						}
-					}
+					}]
 				}
 			]
 		};
@@ -506,7 +549,7 @@ describe('transformResponseFormat', () => {
 				{
 					labels: ['barrier'],
 					box_2d: [10, 10, 20, 20],
-					mask: 'mask_999'
+					masks: ['mask_999']
 				}
 			]
 		};

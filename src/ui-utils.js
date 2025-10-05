@@ -46,39 +46,51 @@ export function extractJSONFromResponse(resp) {
 
 function cleanupPartialMaskJson(raw) {
 	if (typeof raw !== 'string' || raw.length === 0) return raw;
-	const maskKeyToken = '"mask"';
 	let result = raw;
-	let searchIndex = 0;
 	let changed = false;
 
-	while (searchIndex < result.length) {
-		const keyIndex = result.indexOf(maskKeyToken, searchIndex);
-		if (keyIndex === -1) break;
+	const sanitizeKey = (source, keyToken, fallbackLiteral) => {
+		let output = source;
+		let localChanged = false;
+		let searchIndex = 0;
+		while (searchIndex < output.length) {
+			const keyIndex = output.indexOf(keyToken, searchIndex);
+			if (keyIndex === -1) break;
 
-		let cursor = keyIndex + maskKeyToken.length;
-		while (cursor < result.length && /\s/.test(result[cursor])) cursor++;
-		if (cursor >= result.length || result[cursor] !== ':') {
-			searchIndex = cursor;
-			continue;
+			let cursor = keyIndex + keyToken.length;
+			while (cursor < output.length && /\s/.test(output[cursor])) cursor++;
+			if (cursor >= output.length || output[cursor] !== ':') {
+				searchIndex = cursor;
+				continue;
+			}
+			cursor++;
+			while (cursor < output.length && /\s/.test(output[cursor])) cursor++;
+
+			const { start, end, terminated } = findJsonValueRange(output, cursor);
+			if (start >= output.length) break;
+
+			const valueSnippet = output.slice(start, end);
+			const containsMaskSentinel = valueSnippet.includes('start_of_mask');
+			const valueLooksBroken = !terminated;
+			if (containsMaskSentinel || valueLooksBroken) {
+				output = `${output.slice(0, start)}${fallbackLiteral}${output.slice(end)}`;
+				localChanged = true;
+				searchIndex = start + fallbackLiteral.length;
+				continue;
+			}
+
+			searchIndex = end;
 		}
-		cursor++;
-		while (cursor < result.length && /\s/.test(result[cursor])) cursor++;
+		return { output, localChanged };
+	};
 
-		const { start, end, terminated } = findJsonValueRange(result, cursor);
-		if (start >= result.length) break;
+	const maskPass = sanitizeKey(result, '"mask"', 'null');
+	result = maskPass.output;
+	changed = changed || maskPass.localChanged;
 
-		const valueSnippet = result.slice(start, end);
-		const containsMaskSentinel = valueSnippet.includes('start_of_mask');
-		const valueLooksBroken = !terminated;
-		if (containsMaskSentinel || valueLooksBroken) {
-			result = `${result.slice(0, start)}null${result.slice(end)}`;
-			changed = true;
-			searchIndex = start + 4; // length of 'null'
-			continue;
-		}
-
-		searchIndex = end;
-	}
+	const masksPass = sanitizeKey(result, '"masks"', '[]');
+	result = masksPass.output;
+	changed = changed || masksPass.localChanged;
 
 	if (!changed) return raw;
 
@@ -417,6 +429,12 @@ export function transformResponseFormat(parsed) {
 				? item.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
 				: [];
 			const canonicalLabel = labels[0] || (typeof item.label === 'string' ? item.label : 'unknown');
+			const rawMasks = Array.isArray(item.masks)
+				? item.masks.filter(mask => mask != null)
+				: (item.mask != null ? [item.mask] : []);
+			const resolvedMasks = rawMasks
+				.map(maskValue => resolveMaskValue(maskValue, maskAssets))
+				.filter(Boolean);
 			const detection = {
 				id: item.id || `det_${idx}`,
 				label: canonicalLabel,
@@ -427,9 +445,9 @@ export function transformResponseFormat(parsed) {
 				bbox: Array.isArray(item.box_2d) && item.box_2d.length === 4 ? item.box_2d : null
 			};
 			
-			const resolvedMask = resolveMaskValue(item.mask, maskAssets);
-			if (resolvedMask) {
-				detection.mask = resolvedMask;
+			if (resolvedMasks.length > 0) {
+				detection.mask = resolvedMasks[0];
+				detection.masks = resolvedMasks;
 			}
 
 			if (item.safety && typeof item.safety === 'object') {

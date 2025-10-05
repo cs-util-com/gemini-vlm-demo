@@ -7,7 +7,7 @@ Return a JSON object with an "items" array (maximum 20 entries). Each item must 
 - "category": one of "object", "facility_asset", "safety_issue", "progress" (use the best fit for the detection).
 - "confidence": detection confidence between 0 and 1.
 - "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized 0-1000 with a top-left origin.
-- "mask": optional base64-encoded PNG segmentation mask aligned to the same region.
+- "masks": array of base64-encoded PNG segmentation masks aligned to the same region (minItems: 1). Every detection must include at least one segmentation mask; choose the highest-quality mask when multiple are available.
 - Optional context objects when relevant:
 	- "safety": { "isViolation": boolean?, "severity": "low"|"medium"|"high"?, "rule": string? }
 	- "progress": { "phase": string, "percentComplete": number, "notes": string? } — for any detection labeled with category "progress", always provide a best-effort {phase, percentComplete} estimate (0-100) even if approximate.
@@ -45,7 +45,11 @@ export const RESPONSE_SCHEMA = {
 						minItems: 4,
 						maxItems: 4
 					},
-					mask: { type: "string", nullable: true },
+					masks: {
+						type: "array",
+						items: { type: "string" },
+						minItems: 1
+					},
 					safety: {
 						type: "object",
 						properties: {
@@ -92,7 +96,7 @@ export const RESPONSE_SCHEMA = {
 						nullable: true
 					}
 				},
-				required: ["labels", "category", "confidence", "box_2d"]
+				required: ["labels", "category", "confidence", "box_2d", "masks"]
 			}
 		},
 		global_insights: {
