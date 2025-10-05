@@ -540,9 +540,15 @@ function normalizeMaskAssetValue(asset, fallbackMime = 'image/png') {
 function resolveMaskValue(maskValue, maskAssets) {
 	if (!maskValue) return null;
 	if (typeof maskValue === 'string') {
-		if (maskAssets && Object.prototype.hasOwnProperty.call(maskAssets, maskValue)) {
+		// Always check for asset key match first
+		if (maskAssets && maskValue in maskAssets) {
 			return normalizeMaskAssetValue(maskAssets[maskValue]);
 		}
+		// If string looks like a short hex key (32 hex chars), do NOT treat as base64
+		if (/^[a-fA-F0-9]{32,64}$/.test(maskValue)) {
+			return null;
+		}
+		// Only treat as base64 if long enough and not a likely asset key
 		return normalizeStringAsset(maskValue, 'image/png');
 	}
 	if (typeof maskValue === 'object') {
@@ -564,7 +570,8 @@ export function transformResponseFormat(parsed) {
 	
 	// If already in new format with 'items', transform it
 	if (Array.isArray(parsed.items)) {
-		const maskAssets = gatherMaskAssetMap(parsed);
+		const globalMaskAssets = gatherMaskAssetMap(parsed);
+		let aggregatedMaskAssets = globalMaskAssets ? { ...globalMaskAssets } : null;
 		const detections = parsed.items.map((item, idx) => {
 			const labels = Array.isArray(item.labels)
 				? item.labels.map(label => typeof label === 'string' ? label.trim() : '').filter(Boolean)
@@ -573,8 +580,23 @@ export function transformResponseFormat(parsed) {
 			const rawMasks = Array.isArray(item.masks)
 				? item.masks.filter(mask => mask != null)
 				: (item.mask != null ? [item.mask] : []);
+			const itemMaskAssets = gatherMaskAssetMap(item);
+			if (itemMaskAssets) {
+				if (aggregatedMaskAssets) {
+					for (const [key, value] of Object.entries(itemMaskAssets)) {
+						if (aggregatedMaskAssets[key] === undefined) {
+							aggregatedMaskAssets[key] = value;
+						}
+					}
+				} else {
+					aggregatedMaskAssets = { ...itemMaskAssets };
+				}
+			}
+			const maskAssetsForItem = itemMaskAssets
+				? { ...(globalMaskAssets || {}), ...itemMaskAssets }
+				: globalMaskAssets;
 			const resolvedMasks = rawMasks
-				.map(maskValue => resolveMaskValue(maskValue, maskAssets))
+				.map(maskValue => resolveMaskValue(maskValue, maskAssetsForItem))
 				.filter(Boolean);
 			const detection = {
 				id: item.id || `det_${idx}`,
@@ -633,8 +655,8 @@ export function transformResponseFormat(parsed) {
 			detections,
 			global_insights: globalInsights
 		};
-		if (maskAssets) {
-			transformed.maskAssets = maskAssets;
+		if (aggregatedMaskAssets) {
+			transformed.maskAssets = aggregatedMaskAssets;
 		}
 		
 		return transformed;
