@@ -98,6 +98,12 @@ function cleanupPartialMaskJson(raw) {
 	result = masksPass.output;
 	changed = changed || masksPass.localChanged;
 
+	const repairedStrings = repairTruncatedStrings(result);
+	if (repairedStrings !== result) {
+		result = repairedStrings;
+		changed = true;
+	}
+
 	if (!changed) return raw;
 
 	return autoCloseJson(result);
@@ -271,6 +277,67 @@ function autoCloseJson(source) {
 		suffix += stack[i];
 	}
 	return source + suffix;
+}
+
+function repairTruncatedStrings(source) {
+	if (typeof source !== 'string' || source.length === 0) return source;
+	let output = source;
+	let attempts = 0;
+	while (attempts < 3) {
+		attempts++;
+		try {
+			JSON.parse(output);
+			return output;
+		} catch (err) {
+			if (!err || typeof err.message !== 'string' || !/unterminated string/i.test(err.message)) {
+				return output;
+			}
+			const position = extractJsonErrorPosition(err.message);
+			if (typeof position !== 'number') {
+				return output;
+			}
+			const stringStart = findUnescapedQuoteBefore(output, position);
+			if (stringStart < 0) {
+				return output;
+			}
+			const rawValue = output.slice(stringStart + 1, position);
+			const cleanedValue = rawValue.replace(/[\r\n]+/g, ' ').trim();
+			const maxLen = 160;
+			const truncatedValue = cleanedValue.slice(0, maxLen);
+			const hasEllipsis = cleanedValue.length > truncatedValue.length;
+			const base = truncatedValue.length > 0 ? truncatedValue : '[truncated]';
+			const appended = hasEllipsis ? `${base}… (truncated)` : base;
+			const escapedValue = escapeJsonString(appended);
+			output = `${output.slice(0, stringStart)}"${escapedValue}"${output.slice(position)}`;
+		}
+	}
+	return output;
+}
+
+function findUnescapedQuoteBefore(source, index) {
+	let escape = false;
+	for (let i = index - 1; i >= 0; i--) {
+		const ch = source[i];
+		if (escape) {
+			escape = false;
+			continue;
+		}
+		if (ch === '\\') {
+			escape = true;
+			continue;
+		}
+		if (ch === '"') {
+			return i;
+		}
+	}
+	return -1;
+}
+
+function escapeJsonString(value) {
+	return String(value)
+		.replace(/\\/g, '\\\\')
+		.replace(/"/g, '\\"')
+		.replace(/[\u0000-\u001f]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 function assertFiniteNumber(value, name, { allowZero = false } = {}) {

@@ -219,6 +219,24 @@ describe('extractJSONFromResponse', () => {
 		expect(() => extractJSONFromResponse(resp)).toThrow();
 	});
 
+	it('repairs responses truncated mid-string when model hits token limit', () => {
+		const fragment = 'rough-in/early fit-out (plumbing and electrical setup) - initial stages of plumbing and electrical rough-in. ';
+		const longText = fragment.repeat(5);
+		const truncated = `{"items":[{"label":"room","category":"progress","progress":{"phase":"${longText}`;
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: truncated }]
+				}
+			}]
+		};
+
+		const result = extractJSONFromResponse(resp);
+		expect(result.items).toHaveLength(1);
+		expect(result.items[0].progress.phase).toContain('rough-in/early fit-out');
+		expect(result.items[0].progress.phase).toContain('(truncated)');
+	});
+
 	it('augments errors with debug metadata when parsing fails', () => {
 		const broken = '{"items":[{"label":"door"} "extra": true }';
 		const resp = {
