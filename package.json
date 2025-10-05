@@ -4,15 +4,16 @@
   "description": "TemplateJs is a minimal single-page web app template designed for quick deployment.  It follows an AI-assisted iterative development process:",
   "main": "index.js",
   "scripts": {
-    "test": "jest --coverage --config config/jest.config.js",
+    "test": "npm run lint && npm run check:all && npm run test:unit",
+    "test:unit": "jest --coverage --config config/jest.config.js",
     "lint": "eslint . --config config/eslint.config.js",
     "test:watch": "jest --watch --config config/jest.config.js",
     "mutation": "stryker run config/stryker.conf.json; node mutation-testing/mutation-report-to-md.js",
     "check:dup": "jscpd --config config/.jscpd.json src",
     "check:cycles": "madge --circular --extensions js src",
     "check:boundaries": "depcruise -c config/.dependency-cruiser.js src",
-    "check:all": "npm run lint && npm run check:dup && npm run check:cycles && npm run check:boundaries",
-    "validate:all": "npm run test && npm run check:all && npm run mutation"
+    "check:all": "npm run check:dup && npm run check:cycles && npm run check:boundaries",
+    "validate:all": "npm run test && npm run mutation"
   },
   "keywords": [],
   "author": "",
