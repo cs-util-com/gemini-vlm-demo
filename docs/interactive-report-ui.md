@@ -30,18 +30,21 @@ Based on user preferences, implemented the following design:
 ### 1. Report Sections
 
 #### 🚨 Safety Issues (Always Expanded)
+
 - Grid layout with severity-based color coding
 - High (red), Medium (orange), Low (yellow) badges
 - Shows: label, rule violated, confidence percentage
 - Hover highlights bounding box on canvas
 
 #### 📊 Progress (Collapsible)
+
 - **Regional Progress**: For localized detections with `category: "progress"`
-- **Overall Progress**: From `global_insights` 
+- **Overall Progress**: From `global_insights`
 - Visual progress bars with completion percentages
 - Phase names, notes, and confidence levels
 
 #### 🔍 All Detections (Collapsible)
+
 - Grid of cards for every detection
 - Left border color-coding by category:
   - Yellow: Objects
@@ -52,11 +55,13 @@ Based on user preferences, implemented the following design:
 - Hover interaction highlights on canvas
 
 #### 💡 Global Insights (Collapsible)
+
 - Cards for whole-image observations
 - Name, description, confidence
 - Metrics display for quantitative insights
 
 #### 📈 Summary Statistics (Collapsible)
+
 - **Client-side calculated** (prevents LLM hallucination)
 - Bar charts with visual width proportional to counts
 - Two views:
@@ -90,7 +95,7 @@ Based on user preferences, implemented the following design:
    - `setupReportInteractions(container, detections, onHover, onLeave)` - Event handlers
    - Section-specific renderers: `renderSafetyCards()`, `renderProgressSection()`, etc.
 
-2. **`src/report-ui.test.js`** 
+2. **`src/report-ui.test.js`**
    - Tests for aggregate calculation
    - Ensures counts are accurate and prevent hallucination
 
@@ -125,6 +130,7 @@ Based on user preferences, implemented the following design:
 ### Removed: `aggregates` Object
 
 **Before:**
+
 ```json
 {
   "aggregates": {
@@ -135,6 +141,7 @@ Based on user preferences, implemented the following design:
 ```
 
 **After:**
+
 - Removed from schema
 - Calculated client-side from `detections` array
 - Prevents LLM from hallucinating incorrect counts
@@ -146,11 +153,13 @@ Based on user preferences, implemented the following design:
 ## Code Quality
 
 ### Test Coverage
+
 - ✅ All existing tests pass (71 tests)
 - ✅ New tests added for `calculateAggregates()`
 - ✅ Coverage: 99.15% statements, 96.85% branches
 
 ### Linting
+
 - ✅ No ESLint errors
 - ⚠️ 3 complexity warnings (pre-existing, acceptable for demo)
 - ✅ No circular dependencies
@@ -219,6 +228,7 @@ Potential improvements for v2:
 ## Documentation
 
 Updated documentation:
+
 - ✅ README.md - Full section 7 with design rationale
 - ✅ This implementation summary
 - ✅ Code comments in `report-ui.js`
@@ -229,6 +239,7 @@ Updated documentation:
 ## Deployment Notes
 
 No build step required. Changes are:
+
 - Static HTML/CSS additions
 - New ES6 module (`report-ui.js`)
 - Compatible with existing deployment (GitHub Pages)
@@ -238,6 +249,7 @@ No build step required. Changes are:
 ## Summary
 
 Successfully implemented a comprehensive interactive report UI that:
+
 - ✅ Organizes analysis results into logical, collapsible sections
 - ✅ Provides hover interactions between report and canvas
 - ✅ Calculates aggregates client-side (no hallucination)

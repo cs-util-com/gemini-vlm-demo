@@ -2,48 +2,45 @@
 
 import { AEC_PROMPT, RESPONSE_SCHEMA } from './aec-schema.js';
 import {
-	toCanvasBox,
-	toCanvasPolygon,
-	ensureCoordSystem,
-	ensureCoordOrigin
+  toCanvasBox,
+  toCanvasPolygon,
+  ensureCoordSystem,
+  ensureCoordOrigin,
 } from './geometry.js';
 import {
-	colorForCategory,
-	extractJSONFromResponse,
-	calculateDisplayScale,
-	formatJsonOutput,
-	extractBase64FromDataUrl,
-	prepareDetectionData,
-	escapeHtml,
-	transformResponseFormat
+  colorForCategory,
+  extractJSONFromResponse,
+  calculateDisplayScale,
+  formatJsonOutput,
+  extractBase64FromDataUrl,
+  prepareDetectionData,
+  escapeHtml,
+  transformResponseFormat,
 } from './ui-utils.js';
 import { downscaleImageForGemini } from './image-utils.js';
+import { renderReportUI, setupReportInteractions } from './report-ui.js';
 import {
-	renderReportUI,
-	setupReportInteractions
-} from './report-ui.js';
-import {
-	createSession,
-	updateImageStatus,
-	isSessionComplete,
-	calculateSessionAggregates,
-	exportSessionCSV,
-	exportSessionJSON
+  createSession,
+  updateImageStatus,
+  isSessionComplete,
+  calculateSessionAggregates,
+  exportSessionCSV,
+  exportSessionJSON,
 } from './session-manager.js';
 import {
-	renderSessionSummary,
-	renderImageSectionHeader
+  renderSessionSummary,
+  renderImageSectionHeader,
 } from './session-report-ui.js';
 
 // ---------- UI Elements ----------
 const apiKeyEl = document.getElementById('apiKey');
-const modelEl  = document.getElementById('model');
-const fileEl   = document.getElementById('file');
+const modelEl = document.getElementById('model');
+const fileEl = document.getElementById('file');
 const dropzone = document.getElementById('dropzone');
-const canvas   = document.getElementById('canvas');
-const ctx      = canvas.getContext('2d');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 const reportWrap = document.getElementById('reportWrap');
-const jsonOut  = document.getElementById('jsonOut');
+const jsonOut = document.getElementById('jsonOut');
 const progressWrap = document.getElementById('progressWrap');
 const progressBar = document.getElementById('progressBar');
 const progressText = document.getElementById('progressText');
@@ -59,922 +56,995 @@ let currentImageIndex = 0;
 let imageBitmaps = {}; // Store bitmaps by imageId
 const maskCanvasCache = new Map(); // Cache tinted segmentation mask canvases per detection
 const SEGMENTATION_COLORS = Object.freeze([
-	[230, 25, 75],    // Red
-	[60, 180, 75],    // Green
-	[255, 225, 25],   // Yellow
-	[0, 130, 200],    // Blue
-	[245, 130, 48],   // Orange
-	[145, 30, 180],   // Purple
-	[70, 240, 240],   // Cyan
-	[240, 50, 230],   // Magenta
-	[191, 239, 69],   // Lime
-	[250, 190, 212]   // Pink
+  [230, 25, 75], // Red
+  [60, 180, 75], // Green
+  [255, 225, 25], // Yellow
+  [0, 130, 200], // Blue
+  [245, 130, 48], // Orange
+  [145, 30, 180], // Purple
+  [70, 240, 240], // Cyan
+  [240, 50, 230], // Magenta
+  [191, 239, 69], // Lime
+  [250, 190, 212], // Pink
 ]);
-let naturalW = 0, naturalH = 0;
+let naturalW = 0,
+  naturalH = 0;
 let highlightedDetectionId = null;
 let isAnalyzing = false;
 let pendingApiKeyAnalysis = false;
 
 // ---------- Helpers ----------
 function logJson(obj, note) {
-	jsonOut.textContent = formatJsonOutput(obj, note);
+  jsonOut.textContent = formatJsonOutput(obj, note);
 }
 
 function clearReport() {
-	reportWrap.innerHTML = '';
+  reportWrap.innerHTML = '';
 }
 
 function drawOverlays() {
-	const context = prepareOverlayContext();
-	if (!context) return;
+  const context = prepareOverlayContext();
+  if (!context) return;
 
-	redrawBaseImage(context);
-	context.detections.forEach((detection, index) => {
-		drawDetectionOverlay(detection, index, context);
-	});
+  redrawBaseImage(context);
+  context.detections.forEach((detection, index) => {
+    drawDetectionOverlay(detection, index, context);
+  });
 }
 
 function prepareOverlayContext() {
-	if (!currentSession || currentImageIndex >= currentSession.images.length) return null;
-	const currentImage = currentSession.images[currentImageIndex];
-	const bitmap = imageBitmaps[currentImage.imageId];
-	const result = currentImage.result;
-	if (!bitmap || !result) return null;
+  if (!currentSession || currentImageIndex >= currentSession.images.length)
+    return null;
+  const currentImage = currentSession.images[currentImageIndex];
+  const bitmap = imageBitmaps[currentImage.imageId];
+  const result = currentImage.result;
+  if (!bitmap || !result) return null;
 
-	const detections = Array.isArray(result.detections) ? result.detections : [];
-	return {
-		currentImage,
-		bitmap,
-		detections,
-		scaleX: canvas.width / naturalW,
-		scaleY: canvas.height / naturalH,
-		coordSystem: ensureCoordSystem(result, 'normalized_0_1000'),
-		coordOrigin: ensureCoordOrigin(result, 'top-left')
-	};
+  const detections = Array.isArray(result.detections) ? result.detections : [];
+  return {
+    currentImage,
+    bitmap,
+    detections,
+    scaleX: canvas.width / naturalW,
+    scaleY: canvas.height / naturalH,
+    coordSystem: ensureCoordSystem(result, 'normalized_0_1000'),
+    coordOrigin: ensureCoordOrigin(result, 'top-left'),
+  };
 }
 
 function redrawBaseImage({ bitmap }) {
-	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
 }
 
 function drawDetectionOverlay(detection, index, context) {
-	const color = colorForCategory(detection.category);
-	const label = buildDetectionLabel(detection);
-	const maskColor = SEGMENTATION_COLORS[index % SEGMENTATION_COLORS.length];
-	const highlight = highlightedDetectionId === detection.id;
+  const color = colorForCategory(detection.category);
+  const label = buildDetectionLabel(detection);
+  const maskColor = SEGMENTATION_COLORS[index % SEGMENTATION_COLORS.length];
+  const highlight = highlightedDetectionId === detection.id;
 
-	withHighlight(highlight, color, () => {
-		drawSegmentationLayer(detection, maskColor, index, context);
-		drawBoundingLayer(detection, label, color, context, highlight);
-		drawPolygonLayer(detection, label, color, context);
-		drawPointLayer(detection, label, color, context);
-	});
+  withHighlight(highlight, color, () => {
+    drawSegmentationLayer(detection, maskColor, index, context);
+    drawBoundingLayer(detection, label, color, context, highlight);
+    drawPolygonLayer(detection, label, color, context);
+    drawPointLayer(detection, label, color, context);
+  });
 }
 
 function buildDetectionLabel(detection) {
-	const base = detection.label ?? 'item';
-	if (typeof detection.confidence === 'number') {
-		return `${base} (${(detection.confidence * 100).toFixed(0)}%)`;
-	}
-	return base;
+  const base = detection.label ?? 'item';
+  if (typeof detection.confidence === 'number') {
+    return `${base} (${(detection.confidence * 100).toFixed(0)}%)`;
+  }
+  return base;
 }
 
 function withHighlight(isHighlighted, color, drawFn) {
-	if (!isHighlighted) {
-		drawFn();
-		return;
-	}
-	ctx.save();
-	ctx.shadowColor = color;
-	ctx.shadowBlur = 15;
-	ctx.lineWidth = 4;
-	try {
-		drawFn();
-	} finally {
-		ctx.restore();
-	}
+  if (!isHighlighted) {
+    drawFn();
+    return;
+  }
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 15;
+  ctx.lineWidth = 4;
+  try {
+    drawFn();
+  } finally {
+    ctx.restore();
+  }
 }
 
 function drawSegmentationLayer(detection, maskColor, index, context) {
-	if (!detection.mask || !detection.bbox) return;
-	const box = resolveCanvasBox(detection.bbox, context);
-	if (!box) return;
-	const cacheKey = `${context.currentImage.imageId}:${detection.id ?? `mask-${index}`}:${maskColor.join(',')}`;
-	drawMask(detection.mask, box, maskColor, cacheKey);
+  if (!detection.mask || !detection.bbox) return;
+  const box = resolveCanvasBox(detection.bbox, context);
+  if (!box) return;
+  const cacheKey = `${context.currentImage.imageId}:${detection.id ?? `mask-${index}`}:${maskColor.join(',')}`;
+  drawMask(detection.mask, box, maskColor, cacheKey);
 }
 
 function drawBoundingLayer(detection, label, color, context, isHighlighted) {
-	if (!detection.bbox) return;
-	const box = resolveCanvasBox(detection.bbox, context);
-	if (!box) return;
-	drawBox(box, label, color, isHighlighted ? 4 : 2);
+  if (!detection.bbox) return;
+  const box = resolveCanvasBox(detection.bbox, context);
+  if (!box) return;
+  drawBox(box, label, color, isHighlighted ? 4 : 2);
 }
 
 function drawPolygonLayer(detection, label, color, context) {
-	if (!Array.isArray(detection.polygon) || detection.polygon.length < 3) return;
-	const points = toCanvasPolygon(
-		detection.polygon,
-		context.coordSystem,
-		context.scaleX,
-		context.scaleY,
-		naturalW,
-		naturalH,
-		context.coordOrigin
-	);
-	if (!points) return;
-	drawPolygon(points, label, color);
+  if (!Array.isArray(detection.polygon) || detection.polygon.length < 3) return;
+  const points = toCanvasPolygon(
+    detection.polygon,
+    context.coordSystem,
+    context.scaleX,
+    context.scaleY,
+    naturalW,
+    naturalH,
+    context.coordOrigin
+  );
+  if (!points) return;
+  drawPolygon(points, label, color);
 }
 
 function drawPointLayer(detection, label, color, context) {
-	if (!Array.isArray(detection.points) || detection.points.length === 0) return;
-	drawPoints(
-		detection.points,
-		context.coordSystem,
-		context.scaleX,
-		context.scaleY,
-		naturalW,
-		naturalH,
-		context.coordOrigin,
-		label,
-		color
-	);
+  if (!Array.isArray(detection.points) || detection.points.length === 0) return;
+  drawPoints(
+    detection.points,
+    context.coordSystem,
+    context.scaleX,
+    context.scaleY,
+    naturalW,
+    naturalH,
+    context.coordOrigin,
+    label,
+    color
+  );
 }
 
 function resolveCanvasBox(bbox, context) {
-	return toCanvasBox(
-		bbox,
-		context.coordSystem,
-		context.scaleX,
-		context.scaleY,
-		naturalW,
-		naturalH,
-		context.coordOrigin,
-		canvas.width,
-		canvas.height
-	);
+  return toCanvasBox(
+    bbox,
+    context.coordSystem,
+    context.scaleX,
+    context.scaleY,
+    naturalW,
+    naturalH,
+    context.coordOrigin,
+    canvas.width,
+    canvas.height
+  );
 }
 
 function getStoredApiKey() {
-	try {
-		return globalThis.localStorage?.getItem(STORAGE_KEY) || '';
-	} catch {
-		return '';
-	}
+  try {
+    return globalThis.localStorage?.getItem(STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
 }
 
 function persistApiKey(value) {
-	try {
-		const trimmed = value.trim();
-		if (trimmed) {
-			globalThis.localStorage?.setItem(STORAGE_KEY, trimmed);
-		} else {
-			globalThis.localStorage?.removeItem(STORAGE_KEY);
-		}
-	} catch {
-		// Ignore storage errors (private mode, quotas, etc.)
-	}
+  try {
+    const trimmed = value.trim();
+    if (trimmed) {
+      globalThis.localStorage?.setItem(STORAGE_KEY, trimmed);
+    } else {
+      globalThis.localStorage?.removeItem(STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors (private mode, quotas, etc.)
+  }
 }
 
 const storedApiKey = getStoredApiKey();
 if (storedApiKey) {
-	apiKeyEl.value = storedApiKey;
+  apiKeyEl.value = storedApiKey;
 }
 
 function toBase64(file) {
-	return new Promise((res, rej) => {
-		const r = new FileReader();
-		r.onload = () => res(extractBase64FromDataUrl(String(r.result)));
-		r.onerror = rej;
-		r.readAsDataURL(file);
-	});
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(extractBase64FromDataUrl(String(r.result)));
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
 }
 
 async function drawImage(file) {
-	const bmp = await createImageBitmap(file);
-	naturalW = bmp.width;
-	naturalH = bmp.height;
-	// Fit to viewport width but keep full resolution internally
-	const scale = calculateDisplayScale(naturalW, window.innerWidth);
-	canvas.width  = Math.round(naturalW * scale);
-	canvas.height = Math.round(naturalH * scale);
-	// Draw scaled image
-	ctx.clearRect(0,0,canvas.width,canvas.height);
-	ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-	return bmp;
+  const bmp = await createImageBitmap(file);
+  naturalW = bmp.width;
+  naturalH = bmp.height;
+  // Fit to viewport width but keep full resolution internally
+  const scale = calculateDisplayScale(naturalW, window.innerWidth);
+  canvas.width = Math.round(naturalW * scale);
+  canvas.height = Math.round(naturalH * scale);
+  // Draw scaled image
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return bmp;
 }
 
 function showProgress() {
-	progressWrap.classList.remove('hidden');
+  progressWrap.classList.remove('hidden');
 }
 
 function hideProgress() {
-	progressWrap.classList.add('hidden');
+  progressWrap.classList.add('hidden');
 }
 
 function updateProgress(current, total) {
-	const percent = total > 0 ? Math.round((current / total) * 100) : 0;
-	progressBar.style.width = `${percent}%`;
-	progressPercent.textContent = `${percent}%`;
-	progressText.textContent = `Analyzing ${current} of ${total} images...`;
+  const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+  progressBar.style.width = `${percent}%`;
+  progressPercent.textContent = `${percent}%`;
+  progressText.textContent = `Analyzing ${current} of ${total} images...`;
 }
 
 function renderThumbnails() {
-	if (!currentSession) return;
+  if (!currentSession) return;
 
-	thumbnailGallery.innerHTML = '';
-	thumbnailGallery.classList.remove('hidden');
+  thumbnailGallery.innerHTML = '';
+  thumbnailGallery.classList.remove('hidden');
 
-	for (let i = 0; i < currentSession.images.length; i++) {
-		const img = currentSession.images[i];
-		const thumb = document.createElement('div');
-		thumb.className = `thumbnail ${i === currentImageIndex ? 'active' : ''}`;
-		thumb.dataset.imageIndex = i;
+  for (let i = 0; i < currentSession.images.length; i++) {
+    const img = currentSession.images[i];
+    const thumb = document.createElement('div');
+    thumb.className = `thumbnail ${i === currentImageIndex ? 'active' : ''}`;
+    thumb.dataset.imageIndex = i;
 
-		// Create thumbnail from file
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			const imgEl = document.createElement('img');
-			imgEl.src = e.target.result;
-			thumb.appendChild(imgEl);
-		};
-		reader.readAsDataURL(img.file);
+    // Create thumbnail from file
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const imgEl = document.createElement('img');
+      imgEl.src = e.target.result;
+      thumb.appendChild(imgEl);
+    };
+    reader.readAsDataURL(img.file);
 
-		// Status badge
-		const status = document.createElement('div');
-		status.className = `thumbnail-status ${img.status}`;
-		status.textContent = img.status;
-		thumb.appendChild(status);
+    // Status badge
+    const status = document.createElement('div');
+    status.className = `thumbnail-status ${img.status}`;
+    status.textContent = img.status;
+    thumb.appendChild(status);
 
-		// Label
-		const label = document.createElement('div');
-		label.className = 'thumbnail-label';
-		label.textContent = img.fileName;
-		thumb.appendChild(label);
+    // Label
+    const label = document.createElement('div');
+    label.className = 'thumbnail-label';
+    label.textContent = img.fileName;
+    thumb.appendChild(label);
 
-		// Click handler
-		thumb.addEventListener('click', () => switchToImage(i));
+    // Click handler
+    thumb.addEventListener('click', () => switchToImage(i));
 
-		thumbnailGallery.appendChild(thumb);
-	}
+    thumbnailGallery.appendChild(thumb);
+  }
 }
 
 function updateThumbnailStatus(imageIndex) {
-	if (!currentSession) return;
+  if (!currentSession) return;
 
-	const thumb = thumbnailGallery.querySelector(`[data-image-index="${imageIndex}"]`);
-	if (!thumb) return;
+  const thumb = thumbnailGallery.querySelector(
+    `[data-image-index="${imageIndex}"]`
+  );
+  if (!thumb) return;
 
-	const img = currentSession.images[imageIndex];
-	const statusEl = thumb.querySelector('.thumbnail-status');
-	if (statusEl) {
-		statusEl.className = `thumbnail-status ${img.status}`;
-		statusEl.textContent = img.status;
-	}
+  const img = currentSession.images[imageIndex];
+  const statusEl = thumb.querySelector('.thumbnail-status');
+  if (statusEl) {
+    statusEl.className = `thumbnail-status ${img.status}`;
+    statusEl.textContent = img.status;
+  }
 }
 
 async function switchToImage(index) {
-	if (!currentSession || index < 0 || index >= currentSession.images.length) return;
+  if (!currentSession || index < 0 || index >= currentSession.images.length)
+    return;
 
-	currentImageIndex = index;
-	const img = currentSession.images[index];
+  currentImageIndex = index;
+  const img = currentSession.images[index];
 
-	// Update thumbnail active state
-	thumbnailGallery.querySelectorAll('.thumbnail').forEach((el, i) => {
-		el.classList.toggle('active', i === index);
-	});
+  // Update thumbnail active state
+  thumbnailGallery.querySelectorAll('.thumbnail').forEach((el, i) => {
+    el.classList.toggle('active', i === index);
+  });
 
-	// Load bitmap if needed
-	if (!imageBitmaps[img.imageId]) {
-		try {
-			imageBitmaps[img.imageId] = await drawImage(img.file);
-		} catch (err) {
-			logJson({ error: `Failed to load image: ${err.message}` }, 'Error');
-			return;
-		}
-	} else {
-		// Redraw existing bitmap
-		const bmp = imageBitmaps[img.imageId];
-		naturalW = bmp.width;
-		naturalH = bmp.height;
-		const scale = calculateDisplayScale(naturalW, window.innerWidth);
-		canvas.width = Math.round(naturalW * scale);
-		canvas.height = Math.round(naturalH * scale);
-		ctx.clearRect(0, 0, canvas.width, canvas.height);
-		ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-	}
+  // Load bitmap if needed
+  if (!imageBitmaps[img.imageId]) {
+    try {
+      imageBitmaps[img.imageId] = await drawImage(img.file);
+    } catch (err) {
+      logJson({ error: `Failed to load image: ${err.message}` }, 'Error');
+      return;
+    }
+  } else {
+    // Redraw existing bitmap
+    const bmp = imageBitmaps[img.imageId];
+    naturalW = bmp.width;
+    naturalH = bmp.height;
+    const scale = calculateDisplayScale(naturalW, window.innerWidth);
+    canvas.width = Math.round(naturalW * scale);
+    canvas.height = Math.round(naturalH * scale);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  }
 
-	highlightedDetectionId = null;
+  highlightedDetectionId = null;
 
-	drawOverlays();
+  drawOverlays();
 
-	// Scroll to image section in report
-	const section = document.getElementById(`image-section-${img.imageId}`);
-	if (section) {
-		if (section.tagName === 'DETAILS') {
-			section.open = true;
-			// Optionally collapse other sections to keep focus
-			reportWrap.querySelectorAll('details.session-image-panel').forEach(detail => {
-				if (detail !== section) {
-					detail.open = false;
-				}
-			});
-		}
-		section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-	}
+  // Scroll to image section in report
+  const section = document.getElementById(`image-section-${img.imageId}`);
+  if (section) {
+    if (section.tagName === 'DETAILS') {
+      section.open = true;
+      // Optionally collapse other sections to keep focus
+      reportWrap
+        .querySelectorAll('details.session-image-panel')
+        .forEach((detail) => {
+          if (detail !== section) {
+            detail.open = false;
+          }
+        });
+    }
+    section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 function setDrag(drag) {
-	dropzone.classList.toggle('drag', !!drag);
+  dropzone.classList.toggle('drag', !!drag);
 }
 
 function drawLabelBox(x, y, text) {
-	ctx.save();
-	ctx.font = '12px ui-sans-serif, system-ui, -apple-system';
-	const pad = 4;
-	const metrics = ctx.measureText(text);
-	const w = metrics.width + pad*2;
-	const h = 16 + pad*2;
-	ctx.fillStyle = 'rgba(0,0,0,0.6)';
-	ctx.fillRect(x, Math.max(0, y - h), w, h);
-	ctx.fillStyle = '#ffffff';
-	ctx.fillText(text, x + pad, Math.max(12 + (y - h) + pad, 12));
-	ctx.restore();
+  ctx.save();
+  ctx.font = '12px ui-sans-serif, system-ui, -apple-system';
+  const pad = 4;
+  const metrics = ctx.measureText(text);
+  const w = metrics.width + pad * 2;
+  const h = 16 + pad * 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(x, Math.max(0, y - h), w, h);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, x + pad, Math.max(12 + (y - h) + pad, 12));
+  ctx.restore();
 }
 
 function drawBox(b, label, color, lineWidth = 2) {
-	ctx.save();
-	ctx.lineWidth = lineWidth;
-	ctx.strokeStyle = color;
-	ctx.strokeRect(b.x, b.y, b.width, b.height);
-	drawLabelBox(b.x, b.y, label);
-	ctx.restore();
+  ctx.save();
+  ctx.lineWidth = lineWidth;
+  ctx.strokeStyle = color;
+  ctx.strokeRect(b.x, b.y, b.width, b.height);
+  drawLabelBox(b.x, b.y, label);
+  ctx.restore();
 }
 
 function drawPolygon(points, label, color) {
-	if (!points || points.length < 3) return;
-	ctx.save();
-	ctx.lineWidth = 2;
-	ctx.strokeStyle = color;
-	ctx.beginPath();
-	ctx.moveTo(points[0].x, points[0].y);
-	for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-	ctx.closePath();
-	ctx.stroke();
-	// Label near first vertex
-	drawLabelBox(points[0].x, points[0].y, label);
-	ctx.restore();
+  if (!points || points.length < 3) return;
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  ctx.closePath();
+  ctx.stroke();
+  // Label near first vertex
+  drawLabelBox(points[0].x, points[0].y, label);
+  ctx.restore();
 }
 
 function drawMask(maskSource, boundingBox, rgbColor, cacheKey) {
-	if (!maskSource || !boundingBox) return;
+  if (!maskSource || !boundingBox) return;
 
-	const key = cacheKey || maskSource;
-	const cached = maskCanvasCache.get(key);
+  const key = cacheKey || maskSource;
+  const cached = maskCanvasCache.get(key);
 
-	if (cached instanceof HTMLCanvasElement) {
-		renderMaskCanvas(cached, boundingBox);
-		return;
-	}
+  if (cached instanceof HTMLCanvasElement) {
+    renderMaskCanvas(cached, boundingBox);
+    return;
+  }
 
-	if (cached && typeof cached.then === 'function') {
-		cached.then(canvas => {
-			if (canvas instanceof HTMLCanvasElement) {
-				renderMaskCanvas(canvas, boundingBox);
-			}
-		}).catch(() => {
-			maskCanvasCache.delete(key);
-		});
-		return;
-	}
+  if (cached && typeof cached.then === 'function') {
+    cached
+      .then((canvas) => {
+        if (canvas instanceof HTMLCanvasElement) {
+          renderMaskCanvas(canvas, boundingBox);
+        }
+      })
+      .catch(() => {
+        maskCanvasCache.delete(key);
+      });
+    return;
+  }
 
-	const loadPromise = loadTintedMaskCanvas(maskSource, rgbColor)
-		.then(canvas => {
-			if (canvas && key) {
-				maskCanvasCache.set(key, canvas);
-				renderMaskCanvas(canvas, boundingBox);
-				requestAnimationFrame(() => drawOverlays());
-			}
-			return canvas;
-		})
-		.catch(err => {
-			maskCanvasCache.delete(key);
-			console.warn('Failed to render segmentation mask image', {
-				error: err?.message,
-				sourcePreview: typeof maskSource === 'string' ? maskSource.slice(0, 48) : maskSource,
-				boundingBox
-			});
-			return null;
-		});
+  const loadPromise = loadTintedMaskCanvas(maskSource, rgbColor)
+    .then((canvas) => {
+      if (canvas && key) {
+        maskCanvasCache.set(key, canvas);
+        renderMaskCanvas(canvas, boundingBox);
+        requestAnimationFrame(() => drawOverlays());
+      }
+      return canvas;
+    })
+    .catch((err) => {
+      maskCanvasCache.delete(key);
+      console.warn('Failed to render segmentation mask image', {
+        error: err?.message,
+        sourcePreview:
+          typeof maskSource === 'string' ? maskSource.slice(0, 48) : maskSource,
+        boundingBox,
+      });
+      return null;
+    });
 
-	maskCanvasCache.set(key, loadPromise);
+  maskCanvasCache.set(key, loadPromise);
 }
 
 function loadTintedMaskCanvas(maskSource, rgbColor) {
-	const resolvedSrc = normalizeMaskSource(maskSource);
-	if (!resolvedSrc) {
-		return Promise.resolve(null);
-	}
+  const resolvedSrc = normalizeMaskSource(maskSource);
+  if (!resolvedSrc) {
+    return Promise.resolve(null);
+  }
 
-	return new Promise((resolve, reject) => {
-		const img = new Image();
-		img.crossOrigin = 'anonymous';
-		img.decoding = 'async';
-		img.onload = () => {
-			try {
-				const canvas = createTintedMaskCanvas(img, rgbColor);
-				resolve(canvas);
-			} catch (err) {
-				reject(err);
-			}
-		};
-		img.onerror = () => reject(new Error('Mask image failed to load'));
-		img.src = resolvedSrc;
-	});
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.decoding = 'async';
+    img.onload = () => {
+      try {
+        const canvas = createTintedMaskCanvas(img, rgbColor);
+        resolve(canvas);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('Mask image failed to load'));
+    img.src = resolvedSrc;
+  });
 }
 
 function createTintedMaskCanvas(image, rgbColor) {
-	const width = image.width;
-	const height = image.height;
-	if (!width || !height) return null;
+  const width = image.width;
+  const height = image.height;
+  if (!width || !height) return null;
 
-	const tempCanvas = document.createElement('canvas');
-	tempCanvas.width = width;
-	tempCanvas.height = height;
-	const tempCtx = tempCanvas.getContext('2d');
-	if (!tempCtx) return null;
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = width;
+  tempCanvas.height = height;
+  const tempCtx = tempCanvas.getContext('2d');
+  if (!tempCtx) return null;
 
-	tempCtx.imageSmoothingEnabled = false;
-	tempCtx.clearRect(0, 0, width, height);
-	tempCtx.drawImage(image, 0, 0);
+  tempCtx.imageSmoothingEnabled = false;
+  tempCtx.clearRect(0, 0, width, height);
+  tempCtx.drawImage(image, 0, 0);
 
-	let tinted = false;
-	try {
-		const imageData = tempCtx.getImageData(0, 0, width, height);
-		const data = imageData.data;
-		for (let i = 0; i < data.length; i += 4) {
-			const alpha = data[i];
-			data[i] = rgbColor[0];
-			data[i + 1] = rgbColor[1];
-			data[i + 2] = rgbColor[2];
-			data[i + 3] = alpha;
-		}
-		tempCtx.putImageData(imageData, 0, 0);
-		tinted = true;
-	} catch {
-		// Likely a cross-origin image; fall through to composite-based tinting
-	}
+  let tinted = false;
+  try {
+    const imageData = tempCtx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const alpha = data[i];
+      data[i] = rgbColor[0];
+      data[i + 1] = rgbColor[1];
+      data[i + 2] = rgbColor[2];
+      data[i + 3] = alpha;
+    }
+    tempCtx.putImageData(imageData, 0, 0);
+    tinted = true;
+  } catch {
+    // Likely a cross-origin image; fall through to composite-based tinting
+  }
 
-	if (!tinted) {
-		tempCtx.globalCompositeOperation = 'source-in';
-		tempCtx.fillStyle = `rgba(${rgbColor[0]}, ${rgbColor[1]}, ${rgbColor[2]}, 1)`;
-		tempCtx.fillRect(0, 0, width, height);
-		tempCtx.globalCompositeOperation = 'source-over';
-	}
+  if (!tinted) {
+    tempCtx.globalCompositeOperation = 'source-in';
+    tempCtx.fillStyle = `rgba(${rgbColor[0]}, ${rgbColor[1]}, ${rgbColor[2]}, 1)`;
+    tempCtx.fillRect(0, 0, width, height);
+    tempCtx.globalCompositeOperation = 'source-over';
+  }
 
-	return tempCanvas;
+  return tempCanvas;
 }
 
 function renderMaskCanvas(sourceCanvas, boundingBox) {
-	if (!sourceCanvas || !boundingBox) return;
-	ctx.save();
-	ctx.globalAlpha = 0.55;
-	ctx.imageSmoothingEnabled = false;
-	ctx.drawImage(
-		sourceCanvas,
-		boundingBox.x,
-		boundingBox.y,
-		boundingBox.width,
-		boundingBox.height
-	);
-	ctx.restore();
+  if (!sourceCanvas || !boundingBox) return;
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    sourceCanvas,
+    boundingBox.x,
+    boundingBox.y,
+    boundingBox.width,
+    boundingBox.height
+  );
+  ctx.restore();
 }
 
 function normalizeMaskSource(maskSource) {
-	if (typeof maskSource !== 'string') return null;
-	const trimmed = maskSource.trim();
-	if (!trimmed) return null;
-	if (trimmed.startsWith('data:')) return trimmed;
-	if (/^https?:\/\//i.test(trimmed)) return trimmed;
-	const sanitized = trimmed.replace(/\s+/g, '');
-	const base64Pattern = /^[A-Za-z0-9+/=_-]+$/;
-	if (sanitized.length >= 32 && base64Pattern.test(sanitized) && sanitized.length % 4 === 0) {
-		return `data:image/png;base64,${sanitized}`;
-	}
-	return trimmed;
+  if (typeof maskSource !== 'string') return null;
+  const trimmed = maskSource.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('data:')) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  const sanitized = trimmed.replace(/\s+/g, '');
+  const base64Pattern = /^[A-Za-z0-9+/=_-]+$/;
+  if (
+    sanitized.length >= 32 &&
+    base64Pattern.test(sanitized) &&
+    sanitized.length % 4 === 0
+  ) {
+    return `data:image/png;base64,${sanitized}`;
+  }
+  return trimmed;
 }
 
-function drawPoints(points, coordSystem, scaleX, scaleY, imgW, imgH, origin, label, color) {
-	// Points are in [y, x] format normalized 0-1000
-	if (!Array.isArray(points) || points.length === 0) return;
-	
-	ctx.save();
-	
-	for (let i = 0; i < points.length; i++) {
-		const pt = points[i];
-		if (!Array.isArray(pt) || pt.length < 2) continue;
-		
-		// Convert [y, x] normalized coordinates to canvas coordinates
-		let y = pt[0];
-		let x = pt[1];
-		
-		// Normalize from 0-1000 to 0-1
-		if (coordSystem === 'normalized_0_1000') {
-			y = y / 1000;
-			x = x / 1000;
-		}
-		
-		// Convert to canvas coordinates
-		const canvasX = x * imgW * scaleX;
-		const canvasY = y * imgH * scaleY;
-		
-		// Draw point as a circle with border
-		ctx.fillStyle = color;
-		ctx.strokeStyle = '#ffffff';
-		ctx.lineWidth = 2;
-		ctx.beginPath();
-		ctx.arc(canvasX, canvasY, 6, 0, 2 * Math.PI);
-		ctx.fill();
-		ctx.stroke();
-		
-		// Draw label for first point only
-		if (i === 0 && label) {
-			drawLabelBox(canvasX - 20, canvasY - 20, label);
-		}
-	}
-	
-	ctx.restore();
+function drawPoints(
+  points,
+  coordSystem,
+  scaleX,
+  scaleY,
+  imgW,
+  imgH,
+  origin,
+  label,
+  color
+) {
+  // Points are in [y, x] format normalized 0-1000
+  if (!Array.isArray(points) || points.length === 0) return;
+
+  ctx.save();
+
+  for (let i = 0; i < points.length; i++) {
+    const pt = points[i];
+    if (!Array.isArray(pt) || pt.length < 2) continue;
+
+    // Convert [y, x] normalized coordinates to canvas coordinates
+    let y = pt[0];
+    let x = pt[1];
+
+    // Normalize from 0-1000 to 0-1
+    if (coordSystem === 'normalized_0_1000') {
+      y = y / 1000;
+      x = x / 1000;
+    }
+
+    // Convert to canvas coordinates
+    const canvasX = x * imgW * scaleX;
+    const canvasY = y * imgH * scaleY;
+
+    // Draw point as a circle with border
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(canvasX, canvasY, 6, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+
+    // Draw label for first point only
+    if (i === 0 && label) {
+      drawLabelBox(canvasX - 20, canvasY - 20, label);
+    }
+  }
+
+  ctx.restore();
 }
 
 // colorForCategory is now imported from ui-utils.js
 
 async function callGeminiREST({ apiKey, model, file }) {
-	const preprocessResult = await downscaleImageForGemini(file);
-	const { blob, ...preprocess } = preprocessResult;
-	const base64 = await toBase64(blob);
-	const mimeType = preprocess.mimeType || blob.type || file.type || 'image/jpeg';
-	preprocess.base64Length = base64.length;
+  const preprocessResult = await downscaleImageForGemini(file);
+  const { blob, ...preprocess } = preprocessResult;
+  const base64 = await toBase64(blob);
+  const mimeType =
+    preprocess.mimeType || blob.type || file.type || 'image/jpeg';
+  preprocess.base64Length = base64.length;
 
-	const parts = [
-		{ inline_data: { mime_type: mimeType, data: base64 } },
-		{ text: AEC_PROMPT }
-	];
+  const parts = [
+    { inline_data: { mime_type: mimeType, data: base64 } },
+    { text: AEC_PROMPT },
+  ];
 
-	const requestBody = {
-		contents: [{ parts }],
-		generationConfig: {
-			responseMimeType: "application/json",
-			responseSchema: RESPONSE_SCHEMA,
-			thinkingConfig: { thinkingBudget: 0 },
-			maxOutputTokens: 4096,
-		}
-	};
+  const requestBody = {
+    contents: [{ parts }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+      thinkingConfig: { thinkingBudget: 0 },
+      maxOutputTokens: 4096,
+    },
+  };
 
-	const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-	async function post(body) {
-		const r = await fetch(url, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'x-goog-api-key': apiKey
-			},
-			body: JSON.stringify(body)
-		});
-		const data = await r.json().catch(() => ({}));
-		if (!r.ok) {
-			const msg = (data && (data.error?.message || data.candidates?.[0]?.finishReason)) || `HTTP ${r.status}`;
-			throw new Error(msg);
-		}
-		return data;
-	}
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  async function post(body) {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const msg =
+        (data && (data.error?.message || data.candidates?.[0]?.finishReason)) ||
+        `HTTP ${r.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  }
 
-	try {
-		const data = await post(requestBody);
-		return { data, preprocess };
-	} catch (err) {
-		err.preprocess = preprocess;
-		throw err;
-	}
+  try {
+    const data = await post(requestBody);
+    return { data, preprocess };
+  } catch (err) {
+    err.preprocess = preprocess;
+    throw err;
+  }
 }
 
 // extractJSONFromResponse is now imported from ui-utils.js
 
 async function analyzeImageBatch(files) {
-	const apiKey = apiKeyEl.value.trim();
-	const model  = modelEl.value.trim() || 'gemini-2.5-flash';
+  const apiKey = apiKeyEl.value.trim();
+  const model = modelEl.value.trim() || 'gemini-2.5-flash';
 
-	if (!apiKey) {
-		logJson({ error: 'Missing API key' }, 'Error');
-		return;
-	}
+  if (!apiKey) {
+    logJson({ error: 'Missing API key' }, 'Error');
+    return;
+  }
 
-	if (files.length === 0) {
-		logJson({ error: 'No images selected' }, 'Error');
-		return;
-	}
+  if (files.length === 0) {
+    logJson({ error: 'No images selected' }, 'Error');
+    return;
+  }
 
-	if (files.length > MAX_IMAGES) {
-		logJson({ error: `Maximum ${MAX_IMAGES} images allowed. You selected ${files.length}.` }, 'Error');
-		return;
-	}
+  if (files.length > MAX_IMAGES) {
+    logJson(
+      {
+        error: `Maximum ${MAX_IMAGES} images allowed. You selected ${files.length}.`,
+      },
+      'Error'
+    );
+    return;
+  }
 
-	persistApiKey(apiKey);
-	pendingApiKeyAnalysis = false;
-	isAnalyzing = true;
+  persistApiKey(apiKey);
+  pendingApiKeyAnalysis = false;
+  isAnalyzing = true;
 
-	clearReport();
-	imageBitmaps = {};
-	currentImageIndex = 0;
-	maskCanvasCache.clear();
+  clearReport();
+  imageBitmaps = {};
+  currentImageIndex = 0;
+  maskCanvasCache.clear();
 
-	// Create session
-	currentSession = createSession(files);
+  // Create session
+  currentSession = createSession(files);
 
-	// Show progress and thumbnails
-	showProgress();
-	updateProgress(0, currentSession.totalImages);
-	renderThumbnails();
+  // Show progress and thumbnails
+  showProgress();
+  updateProgress(0, currentSession.totalImages);
+  renderThumbnails();
 
-	logJson({ status: `Starting batch analysis of ${files.length} image(s)...` });
+  logJson({ status: `Starting batch analysis of ${files.length} image(s)...` });
 
-	// Process images with concurrency limit
-	const queue = [...currentSession.images];
-	const inProgress = new Set();
-	let completed = 0;
+  // Process images with concurrency limit
+  const queue = [...currentSession.images];
+  const inProgress = new Set();
+  let completed = 0;
 
-	async function processNext() {
-		if (queue.length === 0) return;
+  async function processNext() {
+    if (queue.length === 0) return;
 
-		const image = queue.shift();
-		inProgress.add(image.imageId);
+    const image = queue.shift();
+    inProgress.add(image.imageId);
 
-		try {
-			// Update status to analyzing
-			updateImageStatus(currentSession, image.imageId, 'analyzing');
-			updateThumbnailStatus(currentSession.images.indexOf(image));
+    try {
+      // Update status to analyzing
+      updateImageStatus(currentSession, image.imageId, 'analyzing');
+      updateThumbnailStatus(currentSession.images.indexOf(image));
 
-			// Analyze image
-			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const rawParsed = extractJSONFromResponse(resp);
-			const parsed = transformResponseFormat(rawParsed);
+      // Analyze image
+      const { data: resp, preprocess } = await callGeminiREST({
+        apiKey,
+        model,
+        file: image.file,
+      });
+      const rawParsed = extractJSONFromResponse(resp);
+      const parsed = transformResponseFormat(rawParsed);
 
-			// Load bitmap for this image
-			const bitmap = await createImageBitmap(image.file);
-			imageBitmaps[image.imageId] = bitmap;
+      // Load bitmap for this image
+      const bitmap = await createImageBitmap(image.file);
+      imageBitmaps[image.imageId] = bitmap;
 
-			prepareDetectionData(parsed, bitmap.width, bitmap.height);
-			if (!parsed.image) parsed.image = {};
-			parsed.image.preprocessing = preprocess;
-			image.preprocessing = preprocess;
+      prepareDetectionData(parsed, bitmap.width, bitmap.height);
+      if (!parsed.image) parsed.image = {};
+      parsed.image.preprocessing = preprocess;
+      image.preprocessing = preprocess;
 
-			const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
-			ensureCoordOrigin(parsed, 'top-left');
-			if (parsed.image.coordSystem == null) parsed.image.coordSystem = coordSystem;
+      const coordSystem = ensureCoordSystem(parsed, 'normalized_0_1000');
+      ensureCoordOrigin(parsed, 'top-left');
+      if (parsed.image.coordSystem == null)
+        parsed.image.coordSystem = coordSystem;
 
-			// Update status to completed
-			updateImageStatus(currentSession, image.imageId, 'completed', parsed);
-			updateThumbnailStatus(currentSession.images.indexOf(image));
+      // Update status to completed
+      updateImageStatus(currentSession, image.imageId, 'completed', parsed);
+      updateThumbnailStatus(currentSession.images.indexOf(image));
 
-			completed++;
-			updateProgress(completed, currentSession.totalImages);
+      completed++;
+      updateProgress(completed, currentSession.totalImages);
+    } catch (err) {
+      // Update status to error
+      if (err && err.preprocess) {
+        image.preprocessing = err.preprocess;
+      }
+      updateImageStatus(currentSession, image.imageId, 'error', null, err);
+      updateThumbnailStatus(currentSession.images.indexOf(image));
 
-		} catch (err) {
-			// Update status to error
-			if (err && err.preprocess) {
-				image.preprocessing = err.preprocess;
-			}
-			updateImageStatus(currentSession, image.imageId, 'error', null, err);
-			updateThumbnailStatus(currentSession.images.indexOf(image));
+      completed++;
+      updateProgress(completed, currentSession.totalImages);
+    } finally {
+      inProgress.delete(image.imageId);
+    }
 
-			completed++;
-			updateProgress(completed, currentSession.totalImages);
-		} finally {
-			inProgress.delete(image.imageId);
-		}
+    // Process next if available
+    if (queue.length > 0) {
+      await processNext();
+    }
+  }
 
-		// Process next if available
-		if (queue.length > 0) {
-			await processNext();
-		}
-	}
+  // Start concurrent processing
+  const workers = [];
+  for (let i = 0; i < Math.min(CONCURRENCY_LIMIT, files.length); i++) {
+    workers.push(processNext());
+  }
 
-	// Start concurrent processing
-	const workers = [];
-	for (let i = 0; i < Math.min(CONCURRENCY_LIMIT, files.length); i++) {
-		workers.push(processNext());
-	}
+  await Promise.all(workers);
 
-	await Promise.all(workers);
+  // All images processed
+  isAnalyzing = false;
+  hideProgress();
 
-	// All images processed
-	isAnalyzing = false;
-	hideProgress();
+  if (isSessionComplete(currentSession)) {
+    // Calculate aggregates
+    currentSession.sessionAggregates =
+      calculateSessionAggregates(currentSession);
 
-	if (isSessionComplete(currentSession)) {
-		// Calculate aggregates
-		currentSession.sessionAggregates = calculateSessionAggregates(currentSession);
+    // Switch to first completed image
+    const firstCompleted = currentSession.images.findIndex(
+      (img) => img.status === 'completed'
+    );
+    if (firstCompleted >= 0) {
+      await switchToImage(firstCompleted);
+    }
 
-		// Switch to first completed image
-		const firstCompleted = currentSession.images.findIndex(img => img.status === 'completed');
-		if (firstCompleted >= 0) {
-			await switchToImage(firstCompleted);
-		}
+    // Render session report
+    renderSessionReport();
 
-		// Render session report
-		renderSessionReport();
-
-		logJson({ 
-			status: 'Batch analysis complete',
-			completed: currentSession.completedImages,
-			failed: currentSession.failedImages,
-			totalDetections: currentSession.sessionAggregates.totalDetections
-		}, 'Session Complete');
-	}
+    logJson(
+      {
+        status: 'Batch analysis complete',
+        completed: currentSession.completedImages,
+        failed: currentSession.failedImages,
+        totalDetections: currentSession.sessionAggregates.totalDetections,
+      },
+      'Session Complete'
+    );
+  }
 }
 
 function renderSessionReport() {
-	const session = currentSession;
-	if (!session || !session.sessionAggregates) return;
+  const session = currentSession;
+  if (!session || !session.sessionAggregates) return;
 
-	reportWrap.innerHTML = buildSessionReportMarkup(session);
+  reportWrap.innerHTML = buildSessionReportMarkup(session);
 
-	bindSessionReportInteractions(session);
-	bindSessionNavigation(reportWrap, [
-		'.safety-image-chip',
-		'.session-insight-card',
-		'.session-progress-chip'
-	]);
-	bindSessionExportButtons(session);
+  bindSessionReportInteractions(session);
+  bindSessionNavigation(reportWrap, [
+    '.safety-image-chip',
+    '.session-insight-card',
+    '.session-progress-chip',
+  ]);
+  bindSessionExportButtons(session);
 }
 
 function buildSessionReportMarkup(session) {
-	let html = '';
-	html += renderSessionSummary(session);
-	html += session.images.map((img, index) => renderSessionImagePanel(img, index)).join('');
-	return html;
+  let html = '';
+  html += renderSessionSummary(session);
+  html += session.images
+    .map((img, index) => renderSessionImagePanel(img, index))
+    .join('');
+  return html;
 }
 
 function renderSessionImagePanel(img, index) {
-	const sectionId = `image-section-${img.imageId}`;
-	const detectionCount = Array.isArray(img.result?.detections) ? img.result.detections.length : null;
-	let body = '';
+  const sectionId = `image-section-${img.imageId}`;
+  const detectionCount = Array.isArray(img.result?.detections)
+    ? img.result.detections.length
+    : null;
+  let body = '';
 
-	if (img.status === 'completed' && img.result) {
-		body = `<div class="session-image-body">${renderReportUI(img.result)}</div>`;
-	} else if (img.status === 'error') {
-		const errorMsg = escapeHtml(img.error?.message || 'Unknown error');
-		body = `<div class="session-image-body session-image-error">
+  if (img.status === 'completed' && img.result) {
+    body = `<div class="session-image-body">${renderReportUI(img.result)}</div>`;
+  } else if (img.status === 'error') {
+    const errorMsg = escapeHtml(img.error?.message || 'Unknown error');
+    body = `<div class="session-image-body session-image-error">
 		<strong>Analysis failed:</strong> ${errorMsg}
 	</div>`;
-	}
+  }
 
-	return `
+  return `
 		<details class="session-image-panel" id="${sectionId}" data-image-id="${img.imageId}">
 			${renderImageSectionHeader(img.imageId, img.fileName, index + 1, {
-				asSummary: true,
-				status: img.status,
-				detectionCount
-			})}
+        asSummary: true,
+        status: img.status,
+        detectionCount,
+      })}
 			${body}
 		</details>
 	`;
 }
 
 function bindSessionReportInteractions(session) {
-	for (const img of session.images) {
-		if (img.status !== 'completed' || !img.result) continue;
-		const detections = Array.isArray(img.result.detections) ? img.result.detections : [];
-		setupReportInteractions(
-			reportWrap,
-			detections,
-			(detection) => {
-				highlightedDetectionId = detection.id;
-				drawOverlays();
-			},
-			() => {
-				highlightedDetectionId = null;
-				drawOverlays();
-			}
-		);
-	}
+  for (const img of session.images) {
+    if (img.status !== 'completed' || !img.result) continue;
+    const detections = Array.isArray(img.result.detections)
+      ? img.result.detections
+      : [];
+    setupReportInteractions(
+      reportWrap,
+      detections,
+      (detection) => {
+        highlightedDetectionId = detection.id;
+        drawOverlays();
+      },
+      () => {
+        highlightedDetectionId = null;
+        drawOverlays();
+      }
+    );
+  }
 }
 
 function bindSessionNavigation(container, selectors) {
-	selectors.forEach(selector => {
-		container.querySelectorAll(selector).forEach(el => bindNavigationTarget(el));
-	});
+  selectors.forEach((selector) => {
+    container
+      .querySelectorAll(selector)
+      .forEach((el) => bindNavigationTarget(el));
+  });
 }
 
 function bindNavigationTarget(element) {
-	if (!element || element.dataset.navBound === 'true') return;
-	element.dataset.navBound = 'true';
-	element.addEventListener('click', () => {
-		navigateToSessionImage(element.dataset.imageId);
-	});
+  if (!element || element.dataset.navBound === 'true') return;
+  element.dataset.navBound = 'true';
+  element.addEventListener('click', () => {
+    navigateToSessionImage(element.dataset.imageId);
+  });
 }
 
 function navigateToSessionImage(imageId) {
-	if (!imageId || !currentSession) return;
-	const targetIndex = currentSession.images.findIndex(img => img.imageId === imageId);
-	if (targetIndex >= 0) {
-		switchToImage(targetIndex);
-	}
+  if (!imageId || !currentSession) return;
+  const targetIndex = currentSession.images.findIndex(
+    (img) => img.imageId === imageId
+  );
+  if (targetIndex >= 0) {
+    switchToImage(targetIndex);
+  }
 }
 
-
 function bindSessionExportButtons(session) {
-	const exportCSVBtn = document.getElementById('exportCSV');
-	const exportJSONBtn = document.getElementById('exportJSON');
+  const exportCSVBtn = document.getElementById('exportCSV');
+  const exportJSONBtn = document.getElementById('exportJSON');
 
-	attachExportHandler(exportCSVBtn, 'text/csv', () => exportSessionCSV(session), session.sessionId);
-	attachExportHandler(exportJSONBtn, 'application/json', () => exportSessionJSON(session), session.sessionId);
+  attachExportHandler(
+    exportCSVBtn,
+    'text/csv',
+    () => exportSessionCSV(session),
+    session.sessionId
+  );
+  attachExportHandler(
+    exportJSONBtn,
+    'application/json',
+    () => exportSessionJSON(session),
+    session.sessionId
+  );
 }
 
 function attachExportHandler(button, mimeType, producer, sessionId) {
-	if (!button || button.dataset.navBound === 'true') return;
-	button.dataset.navBound = 'true';
-	button.addEventListener('click', () => {
-		const content = producer();
-		const fileSuffix = mimeType === 'text/csv' ? 'csv' : 'json';
-		const fileName = `session_${sessionId}.${fileSuffix}`;
-		downloadFile(content, fileName, mimeType);
-	});
+  if (!button || button.dataset.navBound === 'true') return;
+  button.dataset.navBound = 'true';
+  button.addEventListener('click', () => {
+    const content = producer();
+    const fileSuffix = mimeType === 'text/csv' ? 'csv' : 'json';
+    const fileName = `session_${sessionId}.${fileSuffix}`;
+    downloadFile(content, fileName, mimeType);
+  });
 }
 
 function downloadFile(content, fileName, mimeType) {
-	const blob = new Blob([content], { type: mimeType });
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement('a');
-	a.href = url;
-	a.download = fileName;
-	document.body.appendChild(a);
-	a.click();
-	document.body.removeChild(a);
-	URL.revokeObjectURL(url);
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 async function handleFileSelection(files) {
-	if (!files || files.length === 0) return;
+  if (!files || files.length === 0) return;
 
-	const apiKey = apiKeyEl.value.trim();
-	if (!apiKey) {
-		pendingApiKeyAnalysis = true;
-		logJson({ message: `${files.length} image(s) loaded. Enter your API key to start analysis.` });
-		return;
-	}
+  const apiKey = apiKeyEl.value.trim();
+  if (!apiKey) {
+    pendingApiKeyAnalysis = true;
+    logJson({
+      message: `${files.length} image(s) loaded. Enter your API key to start analysis.`,
+    });
+    return;
+  }
 
-	pendingApiKeyAnalysis = false;
-	await analyzeImageBatch(files);
+  pendingApiKeyAnalysis = false;
+  await analyzeImageBatch(files);
 }
 
 // ---------- Event wiring ----------
 dropzone.addEventListener('click', () => fileEl.click());
 
-dropzone.addEventListener('dragover', e => { e.preventDefault(); setDrag(true); });
+dropzone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  setDrag(true);
+});
 dropzone.addEventListener('dragleave', () => setDrag(false));
-dropzone.addEventListener('drop', async e => {
-	e.preventDefault();
-	setDrag(false);
-	const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith('image/'));
-	if (files.length > 0) {
-		await handleFileSelection(files);
-	}
+dropzone.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  setDrag(false);
+  const files = Array.from(e.dataTransfer.files || []).filter((f) =>
+    f.type.startsWith('image/')
+  );
+  if (files.length > 0) {
+    await handleFileSelection(files);
+  }
 });
 
-fileEl.addEventListener('change', async e => {
-	const files = Array.from(e.target.files || []).filter(f => f.type.startsWith('image/'));
-	if (files.length > 0) {
-		await handleFileSelection(files);
-		e.target.value = '';
-	}
+fileEl.addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files || []).filter((f) =>
+    f.type.startsWith('image/')
+  );
+  if (files.length > 0) {
+    await handleFileSelection(files);
+    e.target.value = '';
+  }
 });
 
-apiKeyEl.addEventListener('input', async e => {
-	const value = e.target.value;
-	persistApiKey(value);
-	if (pendingApiKeyAnalysis && value.trim() && !isAnalyzing) {
-		pendingApiKeyAnalysis = false;
-		if (currentSession) {
-			const files = currentSession.images.map(img => img.file);
-			await analyzeImageBatch(files);
-		}
-	}
+apiKeyEl.addEventListener('input', async (e) => {
+  const value = e.target.value;
+  persistApiKey(value);
+  if (pendingApiKeyAnalysis && value.trim() && !isAnalyzing) {
+    pendingApiKeyAnalysis = false;
+    if (currentSession) {
+      const files = currentSession.images.map((img) => img.file);
+      await analyzeImageBatch(files);
+    }
+  }
 });
 
 // Keyboard navigation for images
-document.addEventListener('keydown', e => {
-	if (!currentSession || isAnalyzing) return;
-	
-	if (e.key === 'ArrowLeft') {
-		e.preventDefault();
-		const prev = currentImageIndex - 1;
-		if (prev >= 0) switchToImage(prev);
-	} else if (e.key === 'ArrowRight') {
-		e.preventDefault();
-		const next = currentImageIndex + 1;
-		if (next < currentSession.images.length) switchToImage(next);
-	}
+document.addEventListener('keydown', (e) => {
+  if (!currentSession || isAnalyzing) return;
+
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    const prev = currentImageIndex - 1;
+    if (prev >= 0) switchToImage(prev);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    const next = currentImageIndex + 1;
+    if (next < currentSession.images.length) switchToImage(next);
+  }
 });
 
 // ---------- Initial message ----------
-logJson({ message: 'Drop or click to choose images (max 20). Analysis starts automatically.' });
+logJson({
+  message:
+    'Drop or click to choose images (max 20). Analysis starts automatically.',
+});

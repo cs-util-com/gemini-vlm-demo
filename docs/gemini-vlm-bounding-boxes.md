@@ -1,9 +1,9 @@
 # TL;DR (what trips people up)
 
-* **Coordinate order is `y,x` (not `x,y`).** Boxes come back as `[y_min, x_min, y_max, x_max]`. Top-left is the origin. Axes: `x`→horizontal, `y`→vertical. ([Google Cloud][1])
-* **Values are normalized to 0–1000** (not 0–1, not pixels) in the official “bounding box detection” flow. Convert to pixels by multiplying **y-values by image height** and **x-values by image width**, then divide by 1000. ([Google Cloud][1])
-* You request boxes either by **prompting** or (better) by using **structured output** with a schema. The docs show examples for both. ([Google Cloud][1])
-* Inline images go in the `generateContent` request as **base64 bytes** (or via Files API). Inline request size limit: **20 MB**. ([Google AI for Developers][2])
+- **Coordinate order is `y,x` (not `x,y`).** Boxes come back as `[y_min, x_min, y_max, x_max]`. Top-left is the origin. Axes: `x`→horizontal, `y`→vertical. ([Google Cloud][1])
+- **Values are normalized to 0–1000** (not 0–1, not pixels) in the official “bounding box detection” flow. Convert to pixels by multiplying **y-values by image height** and **x-values by image width**, then divide by 1000. ([Google Cloud][1])
+- You request boxes either by **prompting** or (better) by using **structured output** with a schema. The docs show examples for both. ([Google Cloud][1])
+- Inline images go in the `generateContent` request as **base64 bytes** (or via Files API). Inline request size limit: **20 MB**. ([Google AI for Developers][2])
 
 ---
 
@@ -11,23 +11,23 @@
 
 ## Format, axes, origin, scale
 
-* **Output format:** `[y_min, x_min, y_max, x_max]` (note the **y-first** order).
-* **Origin:** top-left.
-* **Axes:** `x` increases to the right, `y` increases downward.
-* **Scale:** **normalized 0–1000** for every image (integers are commonly shown in examples).
+- **Output format:** `[y_min, x_min, y_max, x_max]` (note the **y-first** order).
+- **Origin:** top-left.
+- **Axes:** `x` increases to the right, `y` increases downward.
+- **Scale:** **normalized 0–1000** for every image (integers are commonly shown in examples).
   Source (official “Bounding box detection” page): “Output: Bounding boxes in the `[y_min, x_min, y_max, x_max]` format… coordinate values are **normalized to 0–1000** for every image.” ([Google Cloud][1])
 
 > Practical note: Google’s robotics examples also use **[y, x] normalized to 0–1000** for points and show boxes as `box_2d: [ymin, xmin, ymax, xmax]`—consistent with the page above. ([Google AI for Developers][3])
 
 ## How you “ask” for boxes
 
-* You can **prompt** for detection (e.g., “Return bounding boxes as JSON…”), and you can tighten output with **structured output** (`response_schema` + `response_mime_type: "application/json"`).
-* Vertex/AI-Studio guidance: define a **response schema** and **don’t duplicate it in the prompt**. ([Google Cloud][4])
+- You can **prompt** for detection (e.g., “Return bounding boxes as JSON…”), and you can tighten output with **structured output** (`response_schema` + `response_mime_type: "application/json"`).
+- Vertex/AI-Studio guidance: define a **response schema** and **don’t duplicate it in the prompt**. ([Google Cloud][4])
 
 ## Where boxes are visualized
 
-* **AI Studio** will draw them for you.
-* **Vertex / your own app**: you **must** draw them yourself (convert normalized → pixels). ([Google Cloud][1])
+- **AI Studio** will draw them for you.
+- **Vertex / your own app**: you **must** draw them yourself (convert normalized → pixels). ([Google Cloud][1])
 
 ---
 
@@ -58,12 +58,16 @@ Content-Type: application/json
 
 ```json
 {
-  "contents": [{
-    "parts": [
-      { "inline_data": { "mime_type": "image/jpeg", "data": "<BASE64>" } },
-      { "text": "Return bounding boxes for visible construction-related objects as JSON." }
-    ]
-  }],
+  "contents": [
+    {
+      "parts": [
+        { "inline_data": { "mime_type": "image/jpeg", "data": "<BASE64>" } },
+        {
+          "text": "Return bounding boxes for visible construction-related objects as JSON."
+        }
+      ]
+    }
+  ],
   "generationConfig": {
     "response_mime_type": "application/json",
     "response_schema": {
@@ -71,10 +75,15 @@ Content-Type: application/json
       "items": {
         "type": "object",
         "properties": {
-          "box_2d": { "type": "array", "items": { "type": "integer" }, "minItems": 4, "maxItems": 4 },
-          "label":  { "type": "string" }
+          "box_2d": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 4,
+            "maxItems": 4
+          },
+          "label": { "type": "string" }
         },
-        "required": ["box_2d","label"]
+        "required": ["box_2d", "label"]
       }
     }
   }
@@ -116,9 +125,9 @@ If your canvas is visually scaled, account for **devicePixelRatio** so strokes/l
 ```js
 function prepareCanvasForDisplay(canvas, displayW, displayH) {
   const dpr = window.devicePixelRatio || 1;
-  canvas.style.width  = `${displayW}px`;
+  canvas.style.width = `${displayW}px`;
   canvas.style.height = `${displayH}px`;
-  canvas.width  = Math.round(displayW * dpr);
+  canvas.width = Math.round(displayW * dpr);
   canvas.height = Math.round(displayH * dpr);
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // scale drawing ops to CSS pixels
@@ -134,16 +143,16 @@ function prepareCanvasForDisplay(canvas, displayW, displayH) {
 
 Gemini also supports **structured output** with custom shapes—useful if you prefer `x,y,width,height` or want polygons. The official **structured output** docs show how to define a `responseSchema` and warn **not to duplicate the schema in your prompt** (let the schema enforce structure). ([Google AI for Developers][5])
 
-* If you keep the **official normalized convention**, add a field like `"coordSystem": "normalized_0_1000"` and convert client-side.
-* If you really want **pixels**, say so clearly in the schema and prompt (but note: the “bounding box detection” feature itself documents **normalized 0–1000**; if you deviate, **test carefully**).
+- If you keep the **official normalized convention**, add a field like `"coordSystem": "normalized_0_1000"` and convert client-side.
+- If you really want **pixels**, say so clearly in the schema and prompt (but note: the “bounding box detection” feature itself documents **normalized 0–1000**; if you deviate, **test carefully**).
 
 ---
 
 # 5) Official examples you can model after
 
-* **Bounding box detection (Vertex AI docs):** Explains format, origin, and **0–1000 normalization**; shows code that parses integers and multiplies by image dimensions before drawing. ([Google Cloud][1])
-* **Image understanding (Gemini API docs):** How to pass images inline / via Files API; includes REST & JS/Python examples (useful for wiring requests). ([Google AI for Developers][2])
-* **Robotics ER examples:** Prompts for **points** and **boxes** using normalized `[y, x]` (0–1000) with “box_2d”. Helpful as additional, up-to-date examples. ([Google AI for Developers][3])
+- **Bounding box detection (Vertex AI docs):** Explains format, origin, and **0–1000 normalization**; shows code that parses integers and multiplies by image dimensions before drawing. ([Google Cloud][1])
+- **Image understanding (Gemini API docs):** How to pass images inline / via Files API; includes REST & JS/Python examples (useful for wiring requests). ([Google AI for Developers][2])
+- **Robotics ER examples:** Prompts for **points** and **boxes** using normalized `[y, x]` (0–1000) with “box_2d”. Helpful as additional, up-to-date examples. ([Google AI for Developers][3])
 
 (Community write-ups that match the docs’ math—useful for intuition and troubleshooting: Simon Willison’s notes on Gemini’s “**1000×1000**” normalization, plus newer posts showing segmentation/masks as an advanced extension.) ([Simon Willison’s Weblog][6])
 
@@ -167,19 +176,17 @@ Gemini also supports **structured output** with custom shapes—useful if you pr
 Assume the response is:
 
 ```json
-[
-  { "box_2d": [120, 200, 360, 480], "label": "ladder" }
-]
+[{ "box_2d": [120, 200, 360, 480], "label": "ladder" }]
 ```
 
 and your image bitmap is `imgW=1920`, `imgH=1080`.
 
 ```js
 const [ymin, xmin, ymax, xmax] = result[0].box_2d;
-const yMinPx = ymin * imgH / 1000;
-const xMinPx = xmin * imgW / 1000;
-const yMaxPx = ymax * imgH / 1000;
-const xMaxPx = xmax * imgW / 1000;
+const yMinPx = (ymin * imgH) / 1000;
+const xMinPx = (xmin * imgW) / 1000;
+const yMaxPx = (ymax * imgH) / 1000;
+const xMaxPx = (xmax * imgW) / 1000;
 const w = xMaxPx - xMinPx;
 const h = yMaxPx - yMinPx;
 
@@ -202,8 +209,8 @@ The “Bounding box detection” feature is marked **Experimental / Pre-GA** in 
 
 # 9) When to use your custom schema vs. the default box_2d
 
-* If you’re happy with **normalized** coords, you can keep the official `box_2d` convention and convert on your side.
-* If you want **pixels** or **polygons**, define a **`response_schema`** that matches your app (e.g., `bbox: {x,y,width,height}` and `polygon: [{x,y}]`)—Gemini will fill it, and you convert only if you allow normalized too. The structured output docs are the source of truth here. ([Google AI for Developers][5])
+- If you’re happy with **normalized** coords, you can keep the official `box_2d` convention and convert on your side.
+- If you want **pixels** or **polygons**, define a **`response_schema`** that matches your app (e.g., `bbox: {x,y,width,height}` and `polygon: [{x,y}]`)—Gemini will fill it, and you convert only if you allow normalized too. The structured output docs are the source of truth here. ([Google AI for Developers][5])
 
 ---
 
@@ -219,16 +226,15 @@ If that box still lands in the wrong place, it’s almost certainly **conversion
 
 ## Sources
 
-* **Bounding box detection (official, Vertex docs):** format, axes, origin, **0–1000 normalization**, and code that scales to image pixels. ([Google Cloud][1])
-* **Image understanding (Gemini API):** supplying images inline or via Files API; request size limits. ([Google AI for Developers][2])
-* **Structured output (Gemini / Vertex):** define `response_schema`; don’t duplicate schema in prompt. ([Google AI for Developers][5])
-* **Robotics ER (Gemini API):** additional examples that use points and boxes normalized to 0–1000; sample prompts. ([Google AI for Developers][3])
-* **Community confirmation of normalization:** practical notes on the “1000×1000” interpretation and debugging. ([Simon Willison’s Weblog][6])
+- **Bounding box detection (official, Vertex docs):** format, axes, origin, **0–1000 normalization**, and code that scales to image pixels. ([Google Cloud][1])
+- **Image understanding (Gemini API):** supplying images inline or via Files API; request size limits. ([Google AI for Developers][2])
+- **Structured output (Gemini / Vertex):** define `response_schema`; don’t duplicate schema in prompt. ([Google AI for Developers][5])
+- **Robotics ER (Gemini API):** additional examples that use points and boxes normalized to 0–1000; sample prompts. ([Google AI for Developers][3])
+- **Community confirmation of normalization:** practical notes on the “1000×1000” interpretation and debugging. ([Simon Willison’s Weblog][6])
 
-
-[1]: https://cloud.google.com/vertex-ai/generative-ai/docs/bounding-box-detection "Bounding box detection  |  Generative AI on Vertex AI  |  Google Cloud"
-[2]: https://ai.google.dev/gemini-api/docs/image-understanding "Image understanding  |  Gemini API  |  Google AI for Developers"
-[3]: https://ai.google.dev/gemini-api/docs/robotics-overview "Gemini Robotics-ER 1.5  |  Gemini API  |  Google AI for Developers"
-[4]: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/control-generated-output?utm_source=chatgpt.com "Generative AI on Vertex AI - Structured output"
-[5]: https://ai.google.dev/gemini-api/docs/structured-output?utm_source=chatgpt.com "Structured output | Gemini API | Google AI for Developers"
-[6]: https://simonwillison.net/2024/Aug/26/gemini-bounding-box-visualization/?utm_source=chatgpt.com "Building a tool showing how Gemini Pro can return ..."
+[1]: https://cloud.google.com/vertex-ai/generative-ai/docs/bounding-box-detection 'Bounding box detection  |  Generative AI on Vertex AI  |  Google Cloud'
+[2]: https://ai.google.dev/gemini-api/docs/image-understanding 'Image understanding  |  Gemini API  |  Google AI for Developers'
+[3]: https://ai.google.dev/gemini-api/docs/robotics-overview 'Gemini Robotics-ER 1.5  |  Gemini API  |  Google AI for Developers'
+[4]: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/control-generated-output?utm_source=chatgpt.com 'Generative AI on Vertex AI - Structured output'
+[5]: https://ai.google.dev/gemini-api/docs/structured-output?utm_source=chatgpt.com 'Structured output | Gemini API | Google AI for Developers'
+[6]: https://simonwillison.net/2024/Aug/26/gemini-bounding-box-visualization/?utm_source=chatgpt.com 'Building a tool showing how Gemini Pro can return ...'

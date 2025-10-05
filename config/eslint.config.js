@@ -18,7 +18,7 @@ module.exports = [
       'no-eval': 'error',
       'no-implied-eval': 'error',
       'no-extend-native': 'error',
-      'complexity': ['warn', 10],
+      complexity: ['warn', 10],
       'max-depth': ['warn', 4],
     },
   },

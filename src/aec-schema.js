@@ -25,107 +25,107 @@ Do not return polygons or keypoints. Use the labels array for both specific name
 `.trim();
 
 export const RESPONSE_SCHEMA = {
-	type: "object",
-	properties: {
-		items: {
-			type: "array",
-			items: {
-				type: "object",
-				properties: {
-					labels: {
-						type: "array",
-						items: { type: "string" },
-						minItems: 1
-					},
-					category: { type: "string" },
-					confidence: { type: "number" },
-					box_2d: {
-						type: "array",
-						items: { type: "number" },
-						minItems: 4,
-						maxItems: 4
-					},
-					mask: { type: "string", nullable: true },
-					safety: {
-						type: "object",
-						properties: {
-							isViolation: { type: "boolean", nullable: true },
-							severity: { type: "string", nullable: true },
-							rule: { type: "string", nullable: true }
-						},
-						nullable: true
-					},
-					progress: {
-						type: "object",
-						properties: {
-							phase: { type: "string", nullable: true },
-							percentComplete: { type: "number", nullable: true },
-							notes: { type: "string", nullable: true }
-						},
-						nullable: true
-					},
-					attributes: {
-						type: "array",
-						items: {
-							type: "object",
-							properties: {
-								name: { type: "string" },
-								valueStr: { type: "string", nullable: true },
-								valueNum: { type: "number", nullable: true },
-								valueBool: { type: "boolean", nullable: true },
-								unit: { type: "string", nullable: true }
-							},
-							required: ["name"]
-						},
-						nullable: true
-					},
-					relationships: {
-						type: "array",
-						items: {
-							type: "object",
-							properties: {
-								type: { type: "string" },
-								targetId: { type: "string" }
-							},
-							required: ["type", "targetId"]
-						},
-						nullable: true
-					}
-				},
-				required: ["labels", "category", "confidence", "box_2d"]
-			}
-		},
-		global_insights: {
-			type: "array",
-			minItems: 1,
-			items: {
-				type: "object",
-				properties: {
-					labels: {
-						type: "array",
-						items: { type: "string" },
-						minItems: 1
-					},
-					category: { type: "string" },
-					description: { type: "string" },
-					confidence: { type: "number" },
-					metrics: {
-						type: "array",
-						items: {
-							type: "object",
-							properties: {
-								key: { type: "string" },
-								value: { type: "number" },
-								unit: { type: "string", nullable: true }
-							},
-							required: ["key", "value"]
-						},
-						nullable: true
-					}
-				},
-				required: ["labels", "category", "description", "confidence"]
-			}
-		}
-	},
-		required: ["items", "global_insights"]
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          labels: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: 1,
+          },
+          category: { type: 'string' },
+          confidence: { type: 'number' },
+          box_2d: {
+            type: 'array',
+            items: { type: 'number' },
+            minItems: 4,
+            maxItems: 4,
+          },
+          mask: { type: 'string', nullable: true },
+          safety: {
+            type: 'object',
+            properties: {
+              isViolation: { type: 'boolean', nullable: true },
+              severity: { type: 'string', nullable: true },
+              rule: { type: 'string', nullable: true },
+            },
+            nullable: true,
+          },
+          progress: {
+            type: 'object',
+            properties: {
+              phase: { type: 'string', nullable: true },
+              percentComplete: { type: 'number', nullable: true },
+              notes: { type: 'string', nullable: true },
+            },
+            nullable: true,
+          },
+          attributes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                valueStr: { type: 'string', nullable: true },
+                valueNum: { type: 'number', nullable: true },
+                valueBool: { type: 'boolean', nullable: true },
+                unit: { type: 'string', nullable: true },
+              },
+              required: ['name'],
+            },
+            nullable: true,
+          },
+          relationships: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string' },
+                targetId: { type: 'string' },
+              },
+              required: ['type', 'targetId'],
+            },
+            nullable: true,
+          },
+        },
+        required: ['labels', 'category', 'confidence', 'box_2d'],
+      },
+    },
+    global_insights: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        properties: {
+          labels: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: 1,
+          },
+          category: { type: 'string' },
+          description: { type: 'string' },
+          confidence: { type: 'number' },
+          metrics: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                key: { type: 'string' },
+                value: { type: 'number' },
+                unit: { type: 'string', nullable: true },
+              },
+              required: ['key', 'value'],
+            },
+            nullable: true,
+          },
+        },
+        required: ['labels', 'category', 'description', 'confidence'],
+      },
+    },
+  },
+  required: ['items', 'global_insights'],
 };

@@ -1,215 +1,836 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>AEC Vision Demo — Gemini 2.5 (REST, client-only)</title>
-<link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-<style>
-  :root { color-scheme: dark; }
-  body { margin: 0; font-family: system-ui, sans-serif; background:#0b0b10; color:#e8e8ef; }
-  header { padding: 16px 20px; border-bottom: 1px solid #232332; display:flex; gap:12px; align-items:center; flex-wrap:wrap;}
-  header input, header select, header button { background:#141420; color:#e8e8ef; border:1px solid #2a2a3b; border-radius:8px; padding:10px 12px; }
-  header input[type="password"] { width: 320px; }
-  label small.hint-inline { display:block; margin-top:6px; color:#9aa0b4; }
-  label small.hint-inline a { color:#9aa0b4; text-decoration:underline; }
-  label small.hint-inline a:hover { color:#cfd5e4; }
-  #dropzone { margin: 16px 20px; border: 2px dashed #303049; border-radius: 12px; padding: 20px; text-align: center; background:#11111a; cursor:pointer; }
-  #dropzone.drag { background:#161628; border-color:#4a4aff; }
-  #canvasWrap { margin: 16px 20px; overflow:auto; }
-  #canvas { max-width: 100%; display:block; }
-  #jsonOut { margin: 16px 20px 80px; background:#0f0f18; padding: 16px; border-radius: 12px; border:1px solid #1e1e2e; white-space: pre-wrap; word-break: break-word; }
-  .form-group { display: flex; flex-direction: column; gap: 6px; }
-  .form-group label { font-size: 14px; font-weight: 500; color: #cfd5e4; }
-  .form-group .hint-inline { font-size: 12px; }
-  .header-controls { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
-  .header-note { font-size: 12px; text-align: right; max-width: 220px; }
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AEC Vision Demo — Gemini 2.5 (REST, client-only)</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        background: #0b0b10;
+        color: #e8e8ef;
+      }
+      header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #232332;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      header input,
+      header select,
+      header button {
+        background: #141420;
+        color: #e8e8ef;
+        border: 1px solid #2a2a3b;
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      header input[type='password'] {
+        width: 320px;
+      }
+      label small.hint-inline {
+        display: block;
+        margin-top: 6px;
+        color: #9aa0b4;
+      }
+      label small.hint-inline a {
+        color: #9aa0b4;
+        text-decoration: underline;
+      }
+      label small.hint-inline a:hover {
+        color: #cfd5e4;
+      }
+      #dropzone {
+        margin: 16px 20px;
+        border: 2px dashed #303049;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        background: #11111a;
+        cursor: pointer;
+      }
+      #dropzone.drag {
+        background: #161628;
+        border-color: #4a4aff;
+      }
+      #canvasWrap {
+        margin: 16px 20px;
+        overflow: auto;
+      }
+      #canvas {
+        max-width: 100%;
+        display: block;
+      }
+      #jsonOut {
+        margin: 16px 20px 80px;
+        background: #0f0f18;
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid #1e1e2e;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .form-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .form-group label {
+        font-size: 14px;
+        font-weight: 500;
+        color: #cfd5e4;
+      }
+      .form-group .hint-inline {
+        font-size: 12px;
+      }
+      .header-controls {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+      }
+      .header-note {
+        font-size: 12px;
+        text-align: right;
+        max-width: 220px;
+      }
 
-  /* Report UI */
-  #reportWrap { margin: 16px 20px; }
-  .report-section { background:#11111a; border:1px solid #1e1e2e; border-radius:12px; margin-bottom:16px; overflow:hidden; }
-  .report-header { padding:16px 20px; background:#141420; cursor:pointer; user-select:none; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1e1e2e; }
-  .report-header:hover { background:#181828; }
-  .report-header h3 { margin:0; font-size:16px; font-weight:600; display:flex; align-items:center; gap:8px; }
-  .report-header .toggle-icon { transition: transform 0.2s; }
-  .report-header.collapsed .toggle-icon { transform: rotate(-90deg); }
-  .report-content { padding:20px; }
-  .report-content.hidden { display:none; }
+      /* Report UI */
+      #reportWrap {
+        margin: 16px 20px;
+      }
+      .report-section {
+        background: #11111a;
+        border: 1px solid #1e1e2e;
+        border-radius: 12px;
+        margin-bottom: 16px;
+        overflow: hidden;
+      }
+      .report-header {
+        padding: 16px 20px;
+        background: #141420;
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #1e1e2e;
+      }
+      .report-header:hover {
+        background: #181828;
+      }
+      .report-header h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .report-header .toggle-icon {
+        transition: transform 0.2s;
+      }
+      .report-header.collapsed .toggle-icon {
+        transform: rotate(-90deg);
+      }
+      .report-content {
+        padding: 20px;
+      }
+      .report-content.hidden {
+        display: none;
+      }
 
-  /* Safety Section */
-  .safety-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:12px; }
-  .safety-card { background:#1a0f0f; border:1px solid #4a2020; border-radius:8px; padding:12px; }
-  .safety-card.severity-high { border-color:#ff4444; background:#1f0a0a; }
-  .safety-card.severity-medium { border-color:#ffaa44; background:#1f1508; }
-  .safety-card.severity-low { border-color:#ffdd44; background:#1f1c08; }
-  .safety-card:hover { box-shadow: 0 4px 12px rgba(255,68,68,0.2); transform: translateY(-1px); transition: all 0.2s; }
-  .safety-badge { display:inline-block; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:600; text-transform:uppercase; }
-  .safety-badge.high { background:#ff4444; color:#fff; }
-  .safety-badge.medium { background:#ffaa44; color:#000; }
-  .safety-badge.low { background:#ffdd44; color:#000; }
-  .safety-card-title { font-weight:600; margin:8px 0 4px; font-size:14px; }
-  .safety-card-rule { color:#9aa0b4; font-size:12px; font-style:italic; }
+      /* Safety Section */
+      .safety-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 12px;
+      }
+      .safety-card {
+        background: #1a0f0f;
+        border: 1px solid #4a2020;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .safety-card.severity-high {
+        border-color: #ff4444;
+        background: #1f0a0a;
+      }
+      .safety-card.severity-medium {
+        border-color: #ffaa44;
+        background: #1f1508;
+      }
+      .safety-card.severity-low {
+        border-color: #ffdd44;
+        background: #1f1c08;
+      }
+      .safety-card:hover {
+        box-shadow: 0 4px 12px rgba(255, 68, 68, 0.2);
+        transform: translateY(-1px);
+        transition: all 0.2s;
+      }
+      .safety-badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .safety-badge.high {
+        background: #ff4444;
+        color: #fff;
+      }
+      .safety-badge.medium {
+        background: #ffaa44;
+        color: #000;
+      }
+      .safety-badge.low {
+        background: #ffdd44;
+        color: #000;
+      }
+      .safety-card-title {
+        font-weight: 600;
+        margin: 8px 0 4px;
+        font-size: 14px;
+      }
+      .safety-card-rule {
+        color: #9aa0b4;
+        font-size: 12px;
+        font-style: italic;
+      }
 
-  /* Detection Cards */
-  .detection-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }
-  .detection-card { background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:12px; cursor:pointer; transition: all 0.2s; }
-  .detection-card:hover { border-color:#4a4aff; box-shadow: 0 4px 12px rgba(74,74,255,0.15); transform: translateY(-1px); }
-  .detection-card.category-object { border-left: 3px solid #ffcc00; }
-  .detection-card.category-facility_asset { border-left: 3px solid #00ddff; }
-  .detection-card.category-safety_issue { border-left: 3px solid #ff4444; }
-  .detection-card.category-progress { border-left: 3px solid #44ff88; }
-  .detection-card.category-other { border-left: 3px solid #9aa0b4; }
-  .detection-card.highlight { border-color:#4a4aff; box-shadow: 0 0 16px rgba(74,74,255,0.4); }
-  .detection-card-header { display:flex; justify-content:space-between; align-items:start; margin-bottom:8px; }
-  .detection-card-label { font-weight:600; font-size:14px; }
-  .detection-card-confidence { font-size:12px; color:#9aa0b4; }
-  .detection-card-category { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; background:#2a2a3b; color:#cfd5e4; margin-bottom:8px; }
-  .detection-card-attrs { font-size:12px; color:#9aa0b4; }
-  .detection-card-attrs dt { display:inline; font-weight:600; }
-  .detection-card-attrs dd { display:inline; margin:0 0 4px 4px; }
+      /* Detection Cards */
+      .detection-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 12px;
+      }
+      .detection-card {
+        background: #141420;
+        border: 1px solid #2a2a3b;
+        border-radius: 8px;
+        padding: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .detection-card:hover {
+        border-color: #4a4aff;
+        box-shadow: 0 4px 12px rgba(74, 74, 255, 0.15);
+        transform: translateY(-1px);
+      }
+      .detection-card.category-object {
+        border-left: 3px solid #ffcc00;
+      }
+      .detection-card.category-facility_asset {
+        border-left: 3px solid #00ddff;
+      }
+      .detection-card.category-safety_issue {
+        border-left: 3px solid #ff4444;
+      }
+      .detection-card.category-progress {
+        border-left: 3px solid #44ff88;
+      }
+      .detection-card.category-other {
+        border-left: 3px solid #9aa0b4;
+      }
+      .detection-card.highlight {
+        border-color: #4a4aff;
+        box-shadow: 0 0 16px rgba(74, 74, 255, 0.4);
+      }
+      .detection-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 8px;
+      }
+      .detection-card-label {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .detection-card-confidence {
+        font-size: 12px;
+        color: #9aa0b4;
+      }
+      .detection-card-category {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        background: #2a2a3b;
+        color: #cfd5e4;
+        margin-bottom: 8px;
+      }
+      .detection-card-attrs {
+        font-size: 12px;
+        color: #9aa0b4;
+      }
+      .detection-card-attrs dt {
+        display: inline;
+        font-weight: 600;
+      }
+      .detection-card-attrs dd {
+        display: inline;
+        margin: 0 0 4px 4px;
+      }
 
-  /* Progress Bars */
-  .progress-item { margin-bottom:16px; }
-  .progress-header { display:flex; justify-content:space-between; margin-bottom:6px; }
-  .progress-label { font-weight:600; font-size:14px; }
-  .progress-percent { font-size:14px; color:#44ff88; font-weight:600; }
-  .progress-bar-bg { background:#1e1e2e; height:24px; border-radius:6px; overflow:hidden; position:relative; }
-  .progress-bar-fill { background: linear-gradient(90deg, #2a7a4a, #44ff88); height:100%; transition: width 0.6s ease; display:flex; align-items:center; padding:0 8px; font-size:12px; font-weight:600; }
-  .progress-notes { font-size:12px; color:#9aa0b4; margin-top:4px; }
+      /* Progress Bars */
+      .progress-item {
+        margin-bottom: 16px;
+      }
+      .progress-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+      .progress-label {
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .progress-percent {
+        font-size: 14px;
+        color: #44ff88;
+        font-weight: 600;
+      }
+      .progress-bar-bg {
+        background: #1e1e2e;
+        height: 24px;
+        border-radius: 6px;
+        overflow: hidden;
+        position: relative;
+      }
+      .progress-bar-fill {
+        background: linear-gradient(90deg, #2a7a4a, #44ff88);
+        height: 100%;
+        transition: width 0.6s ease;
+        display: flex;
+        align-items: center;
+        padding: 0 8px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .progress-notes {
+        font-size: 12px;
+        color: #9aa0b4;
+        margin-top: 4px;
+      }
 
-  /* Aggregates Chart */
-  .aggregate-chart { margin-top:12px; }
-  .aggregate-bar { margin-bottom:12px; }
-  .aggregate-bar-header { display:flex; justify-content:space-between; margin-bottom:4px; font-size:13px; }
-  .aggregate-bar-label { font-weight:500; }
-  .aggregate-bar-count { color:#9aa0b4; font-weight:600; }
-  .aggregate-bar-bg { background:#1e1e2e; height:20px; border-radius:4px; overflow:hidden; }
-  .aggregate-bar-fill { height:100%; transition: width 0.6s ease; display:flex; align-items:center; padding:0 6px; font-size:11px; font-weight:600; }
-  .aggregate-bar-fill.category-object { background:#ffcc00; color:#000; }
-  .aggregate-bar-fill.category-facility_asset { background:#00ddff; color:#000; }
-  .aggregate-bar-fill.category-safety_issue { background:#ff4444; color:#fff; }
-  .aggregate-bar-fill.category-progress { background:#44ff88; color:#000; }
-  .aggregate-bar-fill.category-other { background:#9aa0b4; color:#fff; }
+      /* Aggregates Chart */
+      .aggregate-chart {
+        margin-top: 12px;
+      }
+      .aggregate-bar {
+        margin-bottom: 12px;
+      }
+      .aggregate-bar-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+        font-size: 13px;
+      }
+      .aggregate-bar-label {
+        font-weight: 500;
+      }
+      .aggregate-bar-count {
+        color: #9aa0b4;
+        font-weight: 600;
+      }
+      .aggregate-bar-bg {
+        background: #1e1e2e;
+        height: 20px;
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .aggregate-bar-fill {
+        height: 100%;
+        transition: width 0.6s ease;
+        display: flex;
+        align-items: center;
+        padding: 0 6px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .aggregate-bar-fill.category-object {
+        background: #ffcc00;
+        color: #000;
+      }
+      .aggregate-bar-fill.category-facility_asset {
+        background: #00ddff;
+        color: #000;
+      }
+      .aggregate-bar-fill.category-safety_issue {
+        background: #ff4444;
+        color: #fff;
+      }
+      .aggregate-bar-fill.category-progress {
+        background: #44ff88;
+        color: #000;
+      }
+      .aggregate-bar-fill.category-other {
+        background: #9aa0b4;
+        color: #fff;
+      }
 
-  /* Global Insights */
-  .insight-card { background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:12px; margin-bottom:12px; }
-  .insight-card-title { font-weight:600; font-size:14px; margin-bottom:6px; }
-  .insight-card-desc { font-size:13px; color:#cfd5e4; margin-bottom:8px; }
-  .insight-card-confidence { font-size:12px; color:#9aa0b4; }
-  .insight-metrics { display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; }
-  .insight-metric { background:#1e1e2e; padding:6px 10px; border-radius:4px; font-size:12px; }
-  .insight-metric-key { color:#9aa0b4; }
-  .insight-metric-value { font-weight:600; color:#44ff88; margin-left:4px; }
+      /* Global Insights */
+      .insight-card {
+        background: #141420;
+        border: 1px solid #2a2a3b;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .insight-card-title {
+        font-weight: 600;
+        font-size: 14px;
+        margin-bottom: 6px;
+      }
+      .insight-card-desc {
+        font-size: 13px;
+        color: #cfd5e4;
+        margin-bottom: 8px;
+      }
+      .insight-card-confidence {
+        font-size: 12px;
+        color: #9aa0b4;
+      }
+      .insight-metrics {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .insight-metric {
+        background: #1e1e2e;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      .insight-metric-key {
+        color: #9aa0b4;
+      }
+      .insight-metric-value {
+        font-weight: 600;
+        color: #44ff88;
+        margin-left: 4px;
+      }
 
-  /* Progress Bar */
-  #progressWrap { margin: 16px 20px; }
-  #progressWrap.hidden { display: none; }
-  .progress-container { background:#11111a; border:1px solid #1e1e2e; border-radius:12px; padding:16px; }
-  .progress-header { display:flex; justify-content:space-between; margin-bottom:8px; font-size:14px; }
-  #progressText { font-weight:500; color:#cfd5e4; }
-  #progressPercent { font-weight:600; color:#4a4aff; }
+      /* Progress Bar */
+      #progressWrap {
+        margin: 16px 20px;
+      }
+      #progressWrap.hidden {
+        display: none;
+      }
+      .progress-container {
+        background: #11111a;
+        border: 1px solid #1e1e2e;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .progress-header {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 14px;
+      }
+      #progressText {
+        font-weight: 500;
+        color: #cfd5e4;
+      }
+      #progressPercent {
+        font-weight: 600;
+        color: #4a4aff;
+      }
 
-  /* Thumbnail Gallery */
-  #thumbnailGallery { margin: 16px 20px; display:flex; gap:12px; flex-wrap:wrap; }
-  #thumbnailGallery.hidden { display: none; }
-  .thumbnail { width:120px; height:120px; border:2px solid #2a2a3b; border-radius:8px; overflow:hidden; cursor:pointer; position:relative; transition: all 0.2s; }
-  .thumbnail:hover { border-color:#4a4aff; transform: translateY(-2px); }
-  .thumbnail.active { border-color:#4a4aff; box-shadow: 0 0 12px rgba(74,74,255,0.4); }
-  .thumbnail img { width:100%; height:100%; object-fit:cover; }
-  .thumbnail-status { position:absolute; top:4px; right:4px; padding:4px 8px; border-radius:4px; font-size:10px; font-weight:600; text-transform:uppercase; }
-  .thumbnail-status.queued { background:#9aa0b4; color:#000; }
-  .thumbnail-status.analyzing { background:#4a4aff; color:#fff; }
-  .thumbnail-status.completed { background:#44ff88; color:#000; }
-  .thumbnail-status.error { background:#ff4444; color:#fff; }
-  .thumbnail-label { position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.8); padding:4px 6px; font-size:11px; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      /* Thumbnail Gallery */
+      #thumbnailGallery {
+        margin: 16px 20px;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      #thumbnailGallery.hidden {
+        display: none;
+      }
+      .thumbnail {
+        width: 120px;
+        height: 120px;
+        border: 2px solid #2a2a3b;
+        border-radius: 8px;
+        overflow: hidden;
+        cursor: pointer;
+        position: relative;
+        transition: all 0.2s;
+      }
+      .thumbnail:hover {
+        border-color: #4a4aff;
+        transform: translateY(-2px);
+      }
+      .thumbnail.active {
+        border-color: #4a4aff;
+        box-shadow: 0 0 12px rgba(74, 74, 255, 0.4);
+      }
+      .thumbnail img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .thumbnail-status {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .thumbnail-status.queued {
+        background: #9aa0b4;
+        color: #000;
+      }
+      .thumbnail-status.analyzing {
+        background: #4a4aff;
+        color: #fff;
+      }
+      .thumbnail-status.completed {
+        background: #44ff88;
+        color: #000;
+      }
+      .thumbnail-status.error {
+        background: #ff4444;
+        color: #fff;
+      }
+      .thumbnail-label {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(0, 0, 0, 0.8);
+        padding: 4px 6px;
+        font-size: 11px;
+        color: #fff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
 
-  /* Session Summary */
-  .session-summary { background:#11111a; border:2px solid #4a4aff; border-radius:12px; padding:20px; margin:16px 20px; }
-  .session-summary h2 { margin:0 0 16px 0; font-size:20px; color:#4a4aff; }
-  .summary-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:16px; }
-  .summary-card { background:#141420; border:1px solid #2a2a3b; border-radius:8px; padding:12px; }
-  .summary-card-value { font-size:28px; font-weight:700; color:#4a4aff; }
-  .summary-card-label { font-size:12px; color:#9aa0b4; margin-top:4px; }
-  .session-panel-title { margin:0 0 12px; font-size:16px; font-weight:600; color:#cfd5e4; }
-  .session-aggregate-panel { margin-top:20px; padding:16px; background:#141420; border:1px solid #2a2a3b; border-radius:10px; }
-  .session-progress-panel { margin-top:20px; padding:16px; background:#141420; border:1px solid #2a2a3b; border-radius:10px; }
-  .session-progress-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
-  .session-progress-value { font-size:14px; color:#9aa0b4; font-weight:600; }
-  .session-progress-bar-bg { height:18px; border-radius:10px; background:#1e1e2e; overflow:hidden; position:relative; }
-  .session-progress-bar-fill { position:absolute; top:0; left:0; bottom:0; background:linear-gradient(90deg, #1a8b5a, #44ff88); transition:width 0.4s ease; }
-  .session-progress-phases { margin-top:12px; font-size:13px; color:#cfd5e4; display:flex; flex-wrap:wrap; gap:8px; }
-  .session-progress-phase { background:#1e1e2e; padding:4px 8px; border-radius:6px; font-size:12px; color:#9aa0b4; }
-  .session-progress-images { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; }
-  .session-progress-chip { display:inline-flex; align-items:center; padding:6px 10px; background:#141420; border:1px solid #2a2a3b; border-radius:6px; font-size:12px; color:#cfd5e4; cursor:pointer; transition: all 0.2s; }
-  .session-progress-chip:hover { border-color:#44ff88; box-shadow: 0 4px 12px rgba(68,255,136,0.2); transform: translateY(-1px); color:#ffffff; }
-  .session-global-insights { margin-top:20px; padding:16px; background:#141420; border:1px solid #2a2a3b; border-radius:10px; }
-  .session-insight-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
-  .session-insight-card { background:#111827; border:1px solid #1f2937; border-radius:8px; padding:14px; cursor:pointer; transition: all 0.2s; }
-  .session-insight-card:hover { border-color:#4a4aff; box-shadow: 0 4px 14px rgba(74,74,255,0.25); transform: translateY(-1px); }
-  .session-insight-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:6px; }
-  .session-insight-title { font-weight:600; font-size:14px; color:#f9fafb; }
-  .session-insight-meta { font-size:12px; color:#9aa0b4; text-align:right; }
-  .session-insight-desc { font-size:13px; color:#cfd5e4; margin-bottom:8px; }
-  .session-insight-confidence { font-size:12px; color:#9aa0b4; margin-bottom:6px; }
-  .export-buttons { display:flex; gap:12px; margin-top:20px; }
-  .export-btn { background:#4a4aff; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:14px; font-weight:600; cursor:pointer; transition: all 0.2s; }
-  .export-btn:hover { background:#5a5aff; transform: translateY(-1px); }
-  .session-image-panel { margin:16px 20px; background:#11111a; border:1px solid #1e1e2e; border-radius:12px; overflow:hidden; }
-  .image-section-header { display:flex; justify-content:space-between; align-items:center; gap:12px; font-weight:600; font-size:16px; }
-  .session-image-panel summary.image-section-header { list-style:none; padding:16px 20px; background:#141420; cursor:pointer; user-select:none; }
-  .session-image-panel summary.image-section-header::-webkit-details-marker { display:none; }
-  .session-image-panel[open] summary.image-section-header { border-bottom:1px solid #1e1e2e; }
-  .image-section-title { display:flex; align-items:center; gap:8px; }
-  .image-section-meta { font-size:13px; color:#9aa0b4; }
-  .session-image-body { padding:20px; }
-  .session-image-error { background:#1a0f0f; border-top:1px solid #4a2020; border-bottom-left-radius:12px; border-bottom-right-radius:12px; color:#ff4444; }
-</style>
-</head>
-<body>
-<header>
-  <div class="header-controls">
-    <div class="form-group">
-      <label for="apiKey">Gemini API Key</label>
-      <input id="apiKey" type="password" placeholder="Paste key (stored locally in this browser)" />
-      <small class="hint hint-inline">Get a key from <a href="https://aistudio.google.com/app/api-keys" target="_blank" rel="noreferrer noopener">Google AI Studio</a>.</small>
+      /* Session Summary */
+      .session-summary {
+        background: #11111a;
+        border: 2px solid #4a4aff;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 16px 20px;
+      }
+      .session-summary h2 {
+        margin: 0 0 16px 0;
+        font-size: 20px;
+        color: #4a4aff;
+      }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .summary-card {
+        background: #141420;
+        border: 1px solid #2a2a3b;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .summary-card-value {
+        font-size: 28px;
+        font-weight: 700;
+        color: #4a4aff;
+      }
+      .summary-card-label {
+        font-size: 12px;
+        color: #9aa0b4;
+        margin-top: 4px;
+      }
+      .session-panel-title {
+        margin: 0 0 12px;
+        font-size: 16px;
+        font-weight: 600;
+        color: #cfd5e4;
+      }
+      .session-aggregate-panel {
+        margin-top: 20px;
+        padding: 16px;
+        background: #141420;
+        border: 1px solid #2a2a3b;
+        border-radius: 10px;
+      }
+      .session-progress-panel {
+        margin-top: 20px;
+        padding: 16px;
+        background: #141420;
+        border: 1px solid #2a2a3b;
+        border-radius: 10px;
+      }
+      .session-progress-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .session-progress-value {
+        font-size: 14px;
+        color: #9aa0b4;
+        font-weight: 600;
+      }
+      .session-progress-bar-bg {
+        height: 18px;
+        border-radius: 10px;
+        background: #1e1e2e;
+        overflow: hidden;
+        position: relative;
+      }
+      .session-progress-bar-fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        background: linear-gradient(90deg, #1a8b5a, #44ff88);
+        transition: width 0.4s ease;
+      }
+      .session-progress-phases {
+        margin-top: 12px;
+        font-size: 13px;
+        color: #cfd5e4;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .session-progress-phase {
+        background: #1e1e2e;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #9aa0b4;
+      }
+      .session-progress-images {
+        margin-top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .session-progress-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        background: #141420;
+        border: 1px solid #2a2a3b;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #cfd5e4;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .session-progress-chip:hover {
+        border-color: #44ff88;
+        box-shadow: 0 4px 12px rgba(68, 255, 136, 0.2);
+        transform: translateY(-1px);
+        color: #ffffff;
+      }
+      .session-global-insights {
+        margin-top: 20px;
+        padding: 16px;
+        background: #141420;
+        border: 1px solid #2a2a3b;
+        border-radius: 10px;
+      }
+      .session-insight-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+      }
+      .session-insight-card {
+        background: #111827;
+        border: 1px solid #1f2937;
+        border-radius: 8px;
+        padding: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .session-insight-card:hover {
+        border-color: #4a4aff;
+        box-shadow: 0 4px 14px rgba(74, 74, 255, 0.25);
+        transform: translateY(-1px);
+      }
+      .session-insight-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+        margin-bottom: 6px;
+      }
+      .session-insight-title {
+        font-weight: 600;
+        font-size: 14px;
+        color: #f9fafb;
+      }
+      .session-insight-meta {
+        font-size: 12px;
+        color: #9aa0b4;
+        text-align: right;
+      }
+      .session-insight-desc {
+        font-size: 13px;
+        color: #cfd5e4;
+        margin-bottom: 8px;
+      }
+      .session-insight-confidence {
+        font-size: 12px;
+        color: #9aa0b4;
+        margin-bottom: 6px;
+      }
+      .export-buttons {
+        display: flex;
+        gap: 12px;
+        margin-top: 20px;
+      }
+      .export-btn {
+        background: #4a4aff;
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .export-btn:hover {
+        background: #5a5aff;
+        transform: translateY(-1px);
+      }
+      .session-image-panel {
+        margin: 16px 20px;
+        background: #11111a;
+        border: 1px solid #1e1e2e;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .image-section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        font-weight: 600;
+        font-size: 16px;
+      }
+      .session-image-panel summary.image-section-header {
+        list-style: none;
+        padding: 16px 20px;
+        background: #141420;
+        cursor: pointer;
+        user-select: none;
+      }
+      .session-image-panel
+        summary.image-section-header::-webkit-details-marker {
+        display: none;
+      }
+      .session-image-panel[open] summary.image-section-header {
+        border-bottom: 1px solid #1e1e2e;
+      }
+      .image-section-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .image-section-meta {
+        font-size: 13px;
+        color: #9aa0b4;
+      }
+      .session-image-body {
+        padding: 20px;
+      }
+      .session-image-error {
+        background: #1a0f0f;
+        border-top: 1px solid #4a2020;
+        border-bottom-left-radius: 12px;
+        border-bottom-right-radius: 12px;
+        color: #ff4444;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-controls">
+        <div class="form-group">
+          <label for="apiKey">Gemini API Key</label>
+          <input
+            id="apiKey"
+            type="password"
+            placeholder="Paste key (stored locally in this browser)"
+          />
+          <small class="hint hint-inline"
+            >Get a key from
+            <a
+              href="https://aistudio.google.com/app/api-keys"
+              target="_blank"
+              rel="noreferrer noopener"
+              >Google AI Studio</a
+            >.</small
+          >
+        </div>
+        <div class="form-group">
+          <label for="model">Model</label>
+          <select id="model">
+            <option selected>gemini-2.5-flash</option>
+            <option>gemini-2.5-pro</option>
+            <option>gemini-pro</option>
+          </select>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <small class="hint header-note"
+        >This is a prototype. Your key is stored in this browser and only sent
+        to Google's API.</small
+      >
+    </header>
+
+    <div id="dropzone">
+      <input id="file" type="file" accept="image/*" multiple hidden />
+      <p><b>Drop images here or click to choose (max 20).</b></p>
+      <p class="hint">
+        Analysis starts automatically. Select multiple images for batch
+        analysis.
+      </p>
     </div>
-    <div class="form-group">
-      <label for="model">Model</label>
-      <select id="model">
-        <option selected>gemini-2.5-flash</option>
-        <option>gemini-2.5-pro</option>
-        <option>gemini-pro</option>
-      </select>
+
+    <div id="progressWrap" class="hidden">
+      <div class="progress-container">
+        <div class="progress-header">
+          <span id="progressText">Analyzing images...</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div
+            id="progressBar"
+            class="progress-bar-fill"
+            style="width: 0%"
+          ></div>
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="spacer"></div>
-  <small class="hint header-note">This is a prototype. Your key is stored in this browser and only sent to Google's API.</small>
-</header>
 
-<div id="dropzone">
-  <input id="file" type="file" accept="image/*" multiple hidden />
-  <p><b>Drop images here or click to choose (max 20).</b></p>
-  <p class="hint">Analysis starts automatically. Select multiple images for batch analysis.</p>
-</div>
+    <div id="thumbnailGallery" class="hidden"></div>
 
-<div id="progressWrap" class="hidden">
-  <div class="progress-container">
-    <div class="progress-header">
-      <span id="progressText">Analyzing images...</span>
-      <span id="progressPercent">0%</span>
-    </div>
-    <div class="progress-bar-bg">
-      <div id="progressBar" class="progress-bar-fill" style="width: 0%"></div>
-    </div>
-  </div>
-</div>
+    <div id="canvasWrap"><canvas id="canvas"></canvas></div>
+    <div id="reportWrap"></div>
+    <pre id="jsonOut"></pre>
 
-<div id="thumbnailGallery" class="hidden"></div>
-
-<div id="canvasWrap"><canvas id="canvas"></canvas></div>
-<div id="reportWrap"></div>
-<pre id="jsonOut"></pre>
-
-<script type="module" src="./src/index.js"></script>
-</body>
+    <script type="module" src="./src/index.js"></script>
+  </body>
 </html>
