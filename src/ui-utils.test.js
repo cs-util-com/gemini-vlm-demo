@@ -243,7 +243,7 @@ describe('extractJSONFromResponse', () => {
 		expect(result.items[0].progress.phase).toContain('(truncated)');
 	});
 
-	it('drops invalid mask payloads to avoid non-image data', () => {
+	it('preserves mask payloads even when content is non-image', () => {
 		const payload = `{"items":[{"label":"panel","category":"facility_asset","masks":["${NON_IMAGE_DATA_URL}"],"box_2d":[0,0,1,1]}]}`;
 		const resp = {
 			candidates: [{
@@ -256,10 +256,8 @@ describe('extractJSONFromResponse', () => {
 		const parsed = extractJSONFromResponse(resp);
 		const transformed = transformResponseFormat(parsed);
 		const detection = transformed.detections[0];
-		expect(detection.mask).toBeUndefined();
-		expect(detection.masks).toBeUndefined();
-		expect(detection.maskWarnings).toBeDefined();
-		expect(detection.maskWarnings[0]).toContain('non-image');
+		expect(detection.mask).toBe(NON_IMAGE_DATA_URL);
+		expect(detection.masks).toEqual([NON_IMAGE_DATA_URL]);
 	});
 
 	it('augments errors with debug metadata when parsing fails', () => {
