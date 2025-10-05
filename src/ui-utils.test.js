@@ -219,6 +219,62 @@ describe('extractJSONFromResponse', () => {
 		expect(() => extractJSONFromResponse(resp)).toThrow();
 	});
 
+	it('augments errors with debug metadata when parsing fails', () => {
+		const broken = '{"items":[{"label":"door"} "extra": true }';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: broken }]
+				}
+			}]
+		};
+
+		try {
+			extractJSONFromResponse(resp);
+		} catch (err) {
+			expect(err).toBeInstanceOf(Error);
+			expect(err.name).toBe('GeminiJsonParseError');
+			expect(err.rawText).toBe(broken);
+			expect(err.rawTextPreview).toContain('"extra": true');
+			expect(err.rawTextLength).toBe(broken.length);
+			expect(err.jsonCleanupApplied).toBe(false);
+			expect(err.jsonErrorPosition).toBeGreaterThan(0);
+			expect(err.jsonErrorContext).toContain('"extra": true');
+			expect(err.jsonErrorLine).toBeGreaterThan(0);
+			expect(err.jsonErrorColumn).toBeGreaterThan(0);
+			return;
+		}
+
+		throw new Error('Expected extractJSONFromResponse to throw');
+	});
+
+	it('provides cleaned text metadata when cleanup fallback still fails', () => {
+		const broken = '{"items":[{"mask":"\\u003cstart_of_mask\\u003eAAA"}],"invalid": }';
+		const resp = {
+			candidates: [{
+				content: {
+					parts: [{ text: broken }]
+				}
+			}]
+		};
+
+		try {
+			extractJSONFromResponse(resp);
+		} catch (err) {
+			expect(err).toBeInstanceOf(Error);
+			expect(err.rawText).toBe(broken);
+			expect(err.jsonCleanupApplied).toBe(true);
+			expect(typeof err.cleanedText).toBe('string');
+			expect(err.cleanedTextLength).toBe(err.cleanedText.length);
+			expect(err.cleanedText).not.toBe(broken);
+			expect(err.cleanedTextPreview).toBeDefined();
+			expect(err.cleanedTextPreview.length).toBeLessThanOrEqual(800);
+			return;
+		}
+
+		throw new Error('Expected extractJSONFromResponse to throw');
+	});
+
 	it('finds text part when multiple parts present', () => {
 		const resp = {
 			candidates: [{

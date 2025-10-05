@@ -38,8 +38,14 @@ export function extractJSONFromResponse(resp) {
 	} catch (err) {
 		const cleaned = cleanupPartialMaskJson(raw);
 		if (cleaned !== raw) {
-			return JSON.parse(cleaned);
+			try {
+				return JSON.parse(cleaned);
+			} catch (cleanErr) {
+				attachJsonDebugInfo(cleanErr, raw, cleaned);
+				throw cleanErr;
+			}
 		}
+		attachJsonDebugInfo(err, raw, cleaned);
 		throw err;
 	}
 }
@@ -95,6 +101,71 @@ function cleanupPartialMaskJson(raw) {
 	if (!changed) return raw;
 
 	return autoCloseJson(result);
+}
+
+const JSON_DEBUG_PREVIEW_LIMIT = 800;
+
+function attachJsonDebugInfo(error, rawText, cleanedText) {
+	if (!error || typeof error !== 'object') return;
+	const asString = (value) => typeof value === 'string' ? value : null;
+	const raw = asString(rawText);
+	const cleaned = asString(cleanedText);
+	const cleanupApplied = !!raw && !!cleaned && cleaned !== raw;
+
+	if (error.name === 'Error' || error.name === 'SyntaxError') {
+		error.name = 'GeminiJsonParseError';
+	}
+
+	if (raw) {
+		error.rawText = raw;
+		error.rawTextLength = raw.length;
+		error.rawTextPreview = raw.slice(0, JSON_DEBUG_PREVIEW_LIMIT);
+		error.rawTextPreviewTruncated = raw.length > JSON_DEBUG_PREVIEW_LIMIT;
+	}
+
+	if (cleanupApplied) {
+		error.cleanedText = cleaned;
+		error.cleanedTextLength = cleaned.length;
+		error.cleanedTextPreview = cleaned.slice(0, JSON_DEBUG_PREVIEW_LIMIT);
+		error.cleanedTextPreviewTruncated = cleaned.length > JSON_DEBUG_PREVIEW_LIMIT;
+	}
+
+	error.jsonCleanupApplied = cleanupApplied;
+
+	const position = extractJsonErrorPosition(error.message);
+	if (typeof position === 'number' && raw) {
+		error.jsonErrorPosition = position;
+		error.jsonErrorContext = raw.slice(Math.max(0, position - 120), Math.min(raw.length, position + 120));
+		const location = computeLineAndColumn(raw, position);
+		error.jsonErrorLine = location.line;
+		error.jsonErrorColumn = location.column;
+	}
+}
+
+function extractJsonErrorPosition(message) {
+	if (typeof message !== 'string') return null;
+	const match = message.match(/position\s+(\d+)/i);
+	if (match && match[1]) {
+		const parsed = Number(match[1]);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
+
+function computeLineAndColumn(text, position) {
+	let line = 1;
+	let column = 1;
+	const limit = Math.min(position, text.length);
+	for (let i = 0; i < limit; i++) {
+		const ch = text[i];
+		if (ch === '\n') {
+			line++;
+			column = 1;
+		} else {
+			column++;
+		}
+	}
+	return { line, column };
 }
 
 function findJsonValueRange(source, startIndex) {

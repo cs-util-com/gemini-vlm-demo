@@ -135,7 +135,16 @@ function drawOverlays() {
 			);
 			if (b) {
 				const cacheKey = `${imageId}:${d.id ?? `mask-${idx}`}:${maskColor.join(',')}`;
-				drawMask(d.mask, b, maskColor, cacheKey);
+				const maskContext = {
+					imageId,
+					imageFileName: currentImage.fileName,
+					detectionId: d.id ?? null,
+					detectionLabel: d.label ?? null,
+					detectionCategory: d.category ?? null,
+					detectionIndex: idx,
+					maskCount: Array.isArray(d.masks) ? d.masks.length : null
+				};
+				drawMask(d.mask, b, maskColor, cacheKey, maskContext);
 			}
 		}
 
@@ -393,11 +402,40 @@ function drawPolygon(points, label, color) {
 	ctx.restore();
 }
 
-function drawMask(maskSource, boundingBox, rgbColor, cacheKey) {
+function drawMask(maskSource, boundingBox, rgbColor, cacheKey, context = null) {
 	if (!maskSource || !boundingBox) return;
 
 	const key = cacheKey || maskSource;
 	const cached = maskCanvasCache.get(key);
+
+	const logMaskError = (err) => {
+		const sourceIsString = typeof maskSource === 'string';
+		const maskSourcePreview = sourceIsString ? maskSource.slice(0, 256) : maskSource;
+		let dataUrlMime = null;
+		if (sourceIsString && maskSource.startsWith('data:')) {
+			const semicolonIndex = maskSource.indexOf(';');
+			const commaIndex = maskSource.indexOf(',');
+			const boundaryIndex = semicolonIndex > 0 ? semicolonIndex : (commaIndex > 0 ? commaIndex : undefined);
+			dataUrlMime = maskSource.slice(5, boundaryIndex);
+		}
+		console.warn('Failed to render segmentation mask image', {
+			error: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : err,
+			cacheKey: key,
+			boundingBox,
+			maskColor: rgbColor,
+			maskSourceType: typeof maskSource,
+			maskSourceLength: sourceIsString ? maskSource.length : null,
+			maskSourcePreview,
+			maskSourceMimeType: dataUrlMime,
+			imageId: context?.imageId ?? null,
+			imageFileName: context?.imageFileName ?? null,
+			detectionId: context?.detectionId ?? null,
+			detectionLabel: context?.detectionLabel ?? null,
+			detectionCategory: context?.detectionCategory ?? null,
+			detectionIndex: context?.detectionIndex ?? null,
+			maskCount: context?.maskCount ?? null
+		});
+	};
 
 	if (cached instanceof HTMLCanvasElement) {
 		renderMaskCanvas(cached, boundingBox);
@@ -409,8 +447,9 @@ function drawMask(maskSource, boundingBox, rgbColor, cacheKey) {
 			if (canvas instanceof HTMLCanvasElement) {
 				renderMaskCanvas(canvas, boundingBox);
 			}
-		}).catch(() => {
+		}).catch(err => {
 			maskCanvasCache.delete(key);
+			logMaskError(err);
 		});
 		return;
 	}
@@ -426,11 +465,7 @@ function drawMask(maskSource, boundingBox, rgbColor, cacheKey) {
 		})
 		.catch(err => {
 			maskCanvasCache.delete(key);
-			console.warn('Failed to render segmentation mask image', {
-				error: err?.message,
-				sourcePreview: typeof maskSource === 'string' ? maskSource.slice(0, 48) : maskSource,
-				boundingBox
-			});
+			logMaskError(err);
 			return null;
 		});
 
@@ -675,15 +710,82 @@ async function analyzeImageBatch(files) {
 		const image = queue.shift();
 		inProgress.add(image.imageId);
 
+		let resp = null;
+		let preprocess = null;
 		try {
 			// Update status to analyzing
 			updateImageStatus(currentSession, image.imageId, 'analyzing');
 			updateThumbnailStatus(currentSession.images.indexOf(image));
 
 			// Analyze image
-			const { data: resp, preprocess } = await callGeminiREST({ apiKey, model, file: image.file });
-			const rawParsed = extractJSONFromResponse(resp);
-			const parsed = transformResponseFormat(rawParsed);
+			try {
+				const result = await callGeminiREST({ apiKey, model, file: image.file });
+				resp = result.data;
+				preprocess = result.preprocess;
+			} catch (apiErr) {
+				apiErr.imageId = apiErr.imageId ?? image.imageId;
+				apiErr.fileName = apiErr.fileName ?? image.fileName;
+				apiErr.__logged = true;
+				console.error('Gemini API request failed', {
+					imageId: image.imageId,
+					fileName: image.fileName,
+					status: 'analyzing',
+					errorName: apiErr?.name,
+					errorMessage: apiErr?.message,
+					preprocess: apiErr?.preprocess ?? null
+				}, apiErr);
+				throw apiErr;
+			}
+
+			let rawParsed;
+			let parsed;
+			try {
+				rawParsed = extractJSONFromResponse(resp);
+				parsed = transformResponseFormat(rawParsed);
+			} catch (parseErr) {
+				parseErr.imageId = parseErr.imageId ?? image.imageId;
+				parseErr.fileName = parseErr.fileName ?? image.fileName;
+				if (preprocess && !parseErr.preprocess) {
+					parseErr.preprocess = preprocess;
+				}
+				if (resp && !parseErr.geminiResponse) {
+					parseErr.geminiResponse = resp;
+				}
+				const candidateText = resp?.candidates?.[0]?.content?.parts?.find(p => typeof p.text === 'string')?.text;
+				const rawTextPreview = typeof parseErr.rawTextPreview === 'string'
+					? parseErr.rawTextPreview
+					: (typeof parseErr.rawText === 'string' ? parseErr.rawText.slice(0, 800) : undefined);
+				const cleanedTextPreview = typeof parseErr.cleanedTextPreview === 'string'
+					? parseErr.cleanedTextPreview
+					: (typeof parseErr.cleanedText === 'string' ? parseErr.cleanedText.slice(0, 800) : undefined);
+				const shouldIncludeRaw = typeof parseErr.rawText === 'string' && parseErr.rawText.length <= 100000;
+				const shouldIncludeCleaned = typeof parseErr.cleanedText === 'string' && parseErr.cleanedText.length <= 100000;
+				parseErr.__logged = true;
+				console.error('Analysis failed while parsing Gemini response', {
+					imageId: image.imageId,
+					fileName: image.fileName,
+					status: 'analyzing',
+					errorName: parseErr?.name,
+					errorMessage: parseErr?.message,
+					jsonCleanupApplied: parseErr?.jsonCleanupApplied ?? false,
+					rawTextLength: parseErr?.rawTextLength ?? (typeof parseErr.rawText === 'string' ? parseErr.rawText.length : undefined),
+					rawTextPreview,
+					cleanedTextLength: parseErr?.cleanedTextLength ?? (typeof parseErr.cleanedText === 'string' ? parseErr.cleanedText.length : undefined),
+					cleanedTextPreview,
+					jsonErrorPosition: parseErr?.jsonErrorPosition ?? null,
+					jsonErrorLine: parseErr?.jsonErrorLine ?? null,
+					jsonErrorColumn: parseErr?.jsonErrorColumn ?? null,
+					jsonErrorContext: parseErr?.jsonErrorContext,
+					geminiResponseCandidates: resp?.candidates?.length ?? 0,
+					geminiFinishReason: resp?.candidates?.[0]?.finishReason ?? null,
+					geminiTextLength: typeof candidateText === 'string' ? candidateText.length : null,
+					geminiTextPreview: typeof candidateText === 'string' ? candidateText.slice(0, 800) : undefined,
+					preprocess,
+					rawJsonCandidate: shouldIncludeRaw ? parseErr.rawText : undefined,
+					cleanedJsonCandidate: shouldIncludeCleaned ? parseErr.cleanedText : undefined
+				}, parseErr);
+				throw parseErr;
+			}
 
 			// Load bitmap for this image
 			const bitmap = await createImageBitmap(image.file);
@@ -709,6 +811,27 @@ async function analyzeImageBatch(files) {
 			// Update status to error
 			if (err && err.preprocess) {
 				image.preprocessing = err.preprocess;
+			}
+			if (err && !err.imageId) {
+				err.imageId = image.imageId;
+			}
+			if (err && !err.fileName) {
+				err.fileName = image.fileName;
+			}
+			const isObjectError = err && Object(err) === err;
+			if (!isObjectError || !err.__logged) {
+				const logDetails = {
+					imageId: image.imageId,
+					fileName: image.fileName,
+					status: 'error',
+					errorName: err?.name,
+					errorMessage: err?.message,
+					preprocess: err?.preprocess ?? null
+				};
+				console.error('Analysis failed for image', logDetails, err);
+				if (isObjectError) {
+					err.__logged = true;
+				}
 			}
 			updateImageStatus(currentSession, image.imageId, 'error', null, err);
 			updateThumbnailStatus(currentSession.images.indexOf(image));
