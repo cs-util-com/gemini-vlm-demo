@@ -9,12 +9,19 @@ Return a JSON object with an "items" array (maximum 20 entries). Each item must 
 - "box_2d": bounding box as [ymin, xmin, ymax, xmax] normalized 0-1000 with a top-left origin.
 - "mask": optional base64-encoded PNG segmentation mask aligned to the same region.
 - Optional context objects when relevant:
-  - "safety": { "isViolation": boolean?, "severity": "low"|"medium"|"high"?, "rule": string? }
-  - "progress": { "phase": string?, "percentComplete": number?, "notes": string? }
-  - "attributes": array of { "name": string, "valueStr"?: string, "valueNum"?: number, "valueBool"?: boolean, "unit"?: string }
-  - "relationships": array of { "type": string, "targetId": string }
+	- "safety": { "isViolation": boolean?, "severity": "low"|"medium"|"high"?, "rule": string? }
+	- "progress": { "phase": string, "percentComplete": number, "notes": string? } — for any detection labeled with category "progress", always provide a best-effort {phase, percentComplete} estimate (0-100) even if approximate.
+	- "attributes": array of { "name": string, "valueStr"?: string, "valueNum"?: number, "valueBool"?: boolean, "unit"?: string }
+	- "relationships": array of { "type": string, "targetId": string }
 
-Do not return polygons or keypoints. Use the labels array for both specific names and broader searchable terms instead of separate name/description fields. Include an optional "global_insights" array for whole-image observations following the same labeling approach (labels array, category, confidence, description, optional metrics). Output ONLY JSON with no prose or code fences.
+Always provide at least one entry describing whole-image progress. Include a mandatory "global_insights" array for whole-image observations; ensure it contains at least one element with:
+- "category": "progress"
+- "labels": ordered specific→general naming for the area or stage
+- "description": narrative summary of the current construction phase/state
+- "metrics": include at least one object with { "key": "percent_complete", "value": <0-100>, "unit": "%" }
+If progress cannot be observed directly, still return the closest estimate available and explain the uncertainty in the description while providing a conservative percent value.
+
+Do not return polygons or keypoints. Use the labels array for both specific names and broader searchable terms instead of separate name/description fields. Output ONLY JSON with no prose or code fences.
 `.trim();
 
 export const RESPONSE_SCHEMA = {
@@ -90,6 +97,7 @@ export const RESPONSE_SCHEMA = {
 		},
 		global_insights: {
 			type: "array",
+			minItems: 1,
 			items: {
 				type: "object",
 				properties: {
@@ -119,5 +127,5 @@ export const RESPONSE_SCHEMA = {
 			}
 		}
 	},
-	required: ["items"]
+		required: ["items", "global_insights"]
 };
