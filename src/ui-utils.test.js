@@ -6,6 +6,7 @@ import {
 	extractBase64FromDataUrl,
 	prepareDetectionData,
 	escapeHtml,
+	escapeJsonString,
 	transformResponseFormat
 } from './ui-utils.js';
 
@@ -330,6 +331,25 @@ describe('extractJSONFromResponse', () => {
 		};
 		const result = extractJSONFromResponse(resp);
 		expect(result).toEqual({ found: true });
+	});
+});
+
+describe('escapeJsonString', () => {
+	it('escapes quotes and backslashes', () => {
+		const original = 'He said "hello" \\ test';
+		const escaped = escapeJsonString(original);
+		expect(escaped).toBe('He said \\"hello\\" \\\\ test');
+	});
+
+	it('unicode-escapes ASCII control characters', () => {
+		const original = '\u0000test\u001ftab';
+		const escaped = escapeJsonString(original);
+		expect(escaped).toBe('\\u0000test\\u001ftab');
+	});
+
+	it('coerces non-string values to strings', () => {
+		expect(escapeJsonString(42)).toBe('42');
+		expect(escapeJsonString(null)).toBe('null');
 	});
 });
 

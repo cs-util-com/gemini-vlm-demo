@@ -333,11 +333,34 @@ function findUnescapedQuoteBefore(source, index) {
 	return -1;
 }
 
-function escapeJsonString(value) {
-	return String(value)
-		.replace(/\\/g, '\\\\')
-		.replace(/"/g, '\\"')
-		.replace(/[\u0000-\u001f]/g, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+export function escapeJsonString(value) {
+	const str = String(value);
+	let needsEscaping = false;
+	for (let i = 0; i < str.length; i++) {
+		const code = str.charCodeAt(i);
+		if (code === 0x22 || code === 0x5c || code < 0x20) {
+			needsEscaping = true;
+			break;
+		}
+	}
+	if (!needsEscaping) {
+		return str;
+	}
+	let result = '';
+	for (let i = 0; i < str.length; i++) {
+		const ch = str[i];
+		const code = str.charCodeAt(i);
+		if (code === 0x22) {
+			result += '\\"';
+		} else if (code === 0x5c) {
+			result += '\\\\';
+		} else if (code < 0x20) {
+			result += `\\u${code.toString(16).padStart(4, '0')}`;
+		} else {
+			result += ch;
+		}
+	}
+	return result;
 }
 
 function assertFiniteNumber(value, name, { allowZero = false } = {}) {
