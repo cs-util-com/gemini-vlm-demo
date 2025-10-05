@@ -155,6 +155,123 @@ function withHighlight(isHighlighted, color, drawFn) {
   }
 }
 
+function logAnalysisError(image, error) {
+  if (!error) return;
+  try {
+    const header = buildAnalysisErrorHeader(image);
+    const groupOpen = openAnalysisErrorGroup(header);
+    const summary = createAnalysisErrorSummary(image, error);
+    console.error('Analysis error summary:', summary, error);
+    logJsonContextInfo(error);
+    logResponsePreviews(error);
+    logApiResponseDebug(error);
+    if (groupOpen) {
+      console.groupEnd();
+    }
+  } catch (loggingError) {
+    console.error('Failed to log Gemini analysis error context', loggingError);
+  }
+}
+
+function buildAnalysisErrorHeader(image) {
+  const parts = ['[Gemini] Analysis failed'];
+  if (image?.fileName) parts.push(`for ${image.fileName}`);
+  if (image?.imageId) parts.push(`(${image.imageId})`);
+  return parts.join(' ');
+}
+
+function openAnalysisErrorGroup(header) {
+  const hasGroup = typeof console.groupCollapsed === 'function';
+  if (hasGroup) {
+    console.groupCollapsed(header);
+    return true;
+  }
+  console.error(header);
+  return false;
+}
+
+function createAnalysisErrorSummary(image, error) {
+  const { imageId, fileName, preprocessing: imagePreprocessing } = image || {};
+  const {
+    message,
+    name,
+    jsonOffset,
+    jsonLine,
+    jsonColumn,
+    attemptedRepair,
+    rawPreview,
+    rawText,
+    processedPreview,
+    processedText,
+    preprocess,
+  } = error || {};
+
+  const summary = {
+    imageId,
+    fileName,
+    message,
+    name,
+    jsonOffset,
+    jsonLine,
+    jsonColumn,
+    attemptedRepair: Boolean(attemptedRepair),
+    rawCharLength: getPreviewLength(rawPreview, rawText),
+    processedCharLength: getPreviewLength(processedPreview, processedText),
+  };
+
+  const preprocessing = preprocess ?? imagePreprocessing;
+  if (preprocessing !== undefined) {
+    summary.preprocessing = preprocessing;
+  }
+
+  return summary;
+}
+
+function getPreviewLength(preview, rawText) {
+  if (preview && typeof preview.length === 'number') {
+    return preview.length;
+  }
+  if (typeof rawText === 'string') {
+    return rawText.length;
+  }
+  return undefined;
+}
+
+function logJsonContextInfo(error) {
+  if (!error?.jsonContextSnippet) return;
+  console.info('JSON context near error', {
+    snippet: error.jsonContextSnippet,
+    pointer: error.jsonContextPointer,
+    offset: error.jsonOffset,
+    line: error.jsonLine,
+    column: error.jsonColumn,
+  });
+}
+
+function logResponsePreviews(error) {
+  logResponsePreview('Gemini response (full text)', error?.rawPreview);
+  if (
+    error?.processedPreview?.text &&
+    (error?.attemptedRepair ||
+      error.processedPreview.text !== error.rawPreview?.text)
+  ) {
+    logResponsePreview('Gemini response after cleanup', error.processedPreview);
+  }
+}
+
+function logResponsePreview(label, preview) {
+  if (!preview?.text) return;
+  const effectiveLabel = preview.truncated
+    ? `${label} (first ${preview.text.length} of ${preview.length} chars)`
+    : label;
+  console.info(effectiveLabel, preview.text);
+}
+
+function logApiResponseDebug(error) {
+  if (!error?.apiResponse) return;
+  console.debug('Gemini API response object:', error.apiResponse);
+}
+
 function drawSegmentationLayer(detection, maskColor, index, context) {
   if (!detection.mask || !detection.bbox) return;
   const box = resolveCanvasBox(detection.bbox, context);
@@ -748,7 +865,14 @@ async function analyzeImageBatch(files) {
         model,
         file: image.file,
       });
-      const rawParsed = extractJSONFromResponse(resp);
+      let rawParsed;
+      try {
+        rawParsed = extractJSONFromResponse(resp);
+      } catch (parseErr) {
+        parseErr.apiResponse = resp;
+        parseErr.preprocess = preprocess;
+        throw parseErr;
+      }
       const parsed = transformResponseFormat(rawParsed);
 
       // Load bitmap for this image
@@ -776,6 +900,7 @@ async function analyzeImageBatch(files) {
       if (err && err.preprocess) {
         image.preprocessing = err.preprocess;
       }
+      logAnalysisError(image, err);
       updateImageStatus(currentSession, image.imageId, 'error', null, err);
       updateThumbnailStatus(currentSession.images.indexOf(image));
 

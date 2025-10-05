@@ -43,10 +43,101 @@ export function extractJSONFromResponse(resp) {
   } catch (err) {
     const cleaned = cleanupPartialMaskJson(raw);
     if (cleaned !== raw) {
-      return JSON.parse(cleaned);
+      try {
+        return JSON.parse(cleaned);
+      } catch (repairErr) {
+        throw enhanceJsonParseError(repairErr, cleaned, {
+          originalText: raw,
+          attemptedRepair: true,
+        });
+      }
     }
-    throw err;
+    throw enhanceJsonParseError(err, raw);
   }
+}
+
+function enhanceJsonParseError(error, processedText, options = {}) {
+  const { originalText = processedText, attemptedRepair = false } = options;
+  const suffix = attemptedRepair ? ' after cleanup' : '';
+  const enhanced = new Error(
+    `Failed to parse Gemini JSON response${suffix}: ${error?.message || 'Unknown parse error'}`
+  );
+  enhanced.name = 'GeminiJSONParseError';
+  enhanced.cause = error instanceof Error ? error : undefined;
+  enhanced.originalMessage = error?.message;
+  enhanced.attemptedRepair = attemptedRepair;
+  enhanced.processedText = processedText;
+  enhanced.processedPreview = buildRawPreview(processedText);
+  enhanced.rawText = originalText;
+  enhanced.rawPreview =
+    originalText === processedText
+      ? enhanced.processedPreview
+      : buildRawPreview(originalText);
+  const pointer = buildJsonPointerMetadata(error, processedText);
+  Object.assign(enhanced, pointer);
+  return enhanced;
+}
+
+function buildRawPreview(source, limit = 4000) {
+  if (typeof source !== 'string') {
+    return null;
+  }
+  const truncated = source.length > limit;
+  const previewText = truncated ? `${source.slice(0, limit)}…` : source;
+  return {
+    text: previewText,
+    length: source.length,
+    truncated,
+  };
+}
+
+function buildJsonPointerMetadata(error, source) {
+  if (typeof source !== 'string') return {};
+  const offset = getJsonErrorOffset(error);
+  if (offset == null) return {};
+  const { line, column } = computeLineAndColumn(source, offset);
+  const { snippet, pointer } = extractContextSnippet(source, offset, 140);
+  return {
+    jsonOffset: offset,
+    jsonLine: line,
+    jsonColumn: column,
+    jsonContextSnippet: snippet,
+    jsonContextPointer: pointer,
+  };
+}
+
+function getJsonErrorOffset(error) {
+  const message = error?.message;
+  if (typeof message !== 'string') return null;
+  const match = message.match(/position\s+(\d+)/i);
+  if (!match) return null;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : null;
+}
+
+function computeLineAndColumn(source, offset) {
+  let line = 1;
+  let column = 1;
+  const limit = Math.min(offset, source.length);
+  for (let i = 0; i < limit; i++) {
+    const ch = source[i];
+    if (ch === '\n') {
+      line++;
+      column = 1;
+    } else {
+      column++;
+    }
+  }
+  return { line, column };
+}
+
+function extractContextSnippet(source, offset, radius) {
+  const start = Math.max(0, offset - radius);
+  const end = Math.min(source.length, offset + radius);
+  const snippet = source.slice(start, end);
+  const pointerPos = offset - start;
+  const pointer = `${' '.repeat(Math.max(0, pointerPos))}^`;
+  return { snippet, pointer };
 }
 
 function cleanupPartialMaskJson(raw) {

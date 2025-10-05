@@ -104,7 +104,7 @@ describe('extractJSONFromResponse', () => {
     );
   });
 
-  it('throws error on invalid JSON', () => {
+  it('throws enhanced error on invalid JSON', () => {
     const resp = {
       candidates: [
         {
@@ -114,7 +114,21 @@ describe('extractJSONFromResponse', () => {
         },
       ],
     };
-    expect(() => extractJSONFromResponse(resp)).toThrow();
+
+    try {
+      extractJSONFromResponse(resp);
+      throw new Error('Expected error');
+    } catch (err) {
+      expect(err).toBeInstanceOf(Error);
+      expect(err.name).toBe('GeminiJSONParseError');
+      expect(err.message).toContain('Failed to parse Gemini JSON response');
+      expect(err.rawText).toBe('not valid json');
+      expect(err.rawPreview).toEqual({
+        text: 'not valid json',
+        length: 'not valid json'.length,
+        truncated: false,
+      });
+    }
   });
 
   it('strips truncated mask data so remaining fields can be parsed', () => {
@@ -168,6 +182,41 @@ describe('extractJSONFromResponse', () => {
     });
   });
 
+  it('surfaces parse error metadata for debugging', () => {
+    const brokenJson = '{"items":[1,2,]}';
+    const resp = {
+      candidates: [
+        {
+          content: {
+            parts: [{ text: brokenJson }],
+          },
+        },
+      ],
+    };
+
+    try {
+      extractJSONFromResponse(resp);
+      throw new Error('Expected error');
+    } catch (err) {
+      expect(err.name).toBe('GeminiJSONParseError');
+      if (err.jsonOffset != null) {
+        expect(err.jsonOffset).toBeGreaterThan(0);
+        expect(err.jsonLine).toBeGreaterThanOrEqual(1);
+        expect(err.jsonColumn).toBeGreaterThanOrEqual(1);
+        expect(err.jsonContextSnippet).toContain('1,2,');
+        expect(err.jsonContextPointer.trim()).toBe('^');
+      } else {
+        expect(err.jsonContextSnippet).toBeUndefined();
+        expect(err.jsonContextPointer).toBeUndefined();
+      }
+      expect(err.processedPreview).toEqual({
+        text: brokenJson,
+        length: brokenJson.length,
+        truncated: false,
+      });
+    }
+  });
+
   it('appends missing closing brackets when mask was otherwise valid', () => {
     const missingRootBrace =
       '{"items":[{"mask":"\\u003cstart_of_mask\\u003eAAAA"}]';
@@ -203,7 +252,9 @@ describe('extractJSONFromResponse', () => {
       ],
     };
 
-    expect(() => extractJSONFromResponse(resp)).toThrow();
+    expect(() => extractJSONFromResponse(resp)).toThrow(
+      'Failed to parse Gemini JSON response'
+    );
   });
 
   it('finds text part when multiple parts present', () => {
